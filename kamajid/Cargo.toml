@@ -1,0 +1,27 @@
+[package]
+name = "kamajid"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+kamaji-core.workspace = true
+teloxide.workspace = true
+matrix-sdk.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["full"] }
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower_governor.workspace = true
+qrcode.workspace = true
+rand.workspace = true
+totp-rs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

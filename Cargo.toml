@@ -1,0 +1,82 @@
+[workspace]
+resolver = "2"
+members = ["kamaji-core", "kamajid", "kamaji"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Full debug info (rustc's default for dev builds) is the single biggest
+# driver of target/ size here -- openshell-sdk pulls in tonic/prost/protobuf
+# and aws-lc-sys, and full DWARF for that dependency tree alone runs into
+# multiple GB per build, compounding fast across repeated build/test/clippy
+# invocations that Cargo never garbage-collects on its own. Line tables are
+# enough for panic backtraces and `tracing` spans; full local-variable
+# debugger info was never load-bearing for this daemon's dev loop.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
+[workspace.dependencies]
+kamaji-core = { path = "kamaji-core" }
+tokio = { version = "1" }
+redb = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+once_cell = "1"
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+scraper = "0.23"
+html2text = "0.12"
+teloxide = { version = "0.17", default-features = false, features = ["macros", "ctrlc_handler", "rustls"] }
+matrix-sdk = "0.18.0"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+rand = "0.8"
+totp-rs = { version = "5", default-features = false, features = ["otpauth"] }
+axum = "0.7"
+tower_governor = "0.4"
+qrcode = "0.14"
+# Already a transitive dependency (reqwest/teloxide/matrix-sdk/openshell-sdk
+# all pull it in with different crypto-backend features, which is exactly why
+# no single one of them ends up installing a process-wide default -- see the
+# `rustls::crypto::CryptoProvider::install_default()` call in kamajid's
+# `main()`). Declared directly here only so that call site can name the
+# `rustls` crate at all.
+rustls = "0.23"
+# Also already a transitive dependency (via openshell-sdk's gRPC channel).
+# Declared directly here so kamaji-core can build its own mTLS `Channel` for
+# gateways with `--enable-mtls-auth` on (this gateway's actual default) --
+# `openshell_sdk::ClientConfig`/`connect()` has no client-cert support (see
+# `openshell-sdk`'s own `transport.rs` doc comment), so kamaji-core builds
+# the channel itself via `tonic::transport::ClientTlsConfig::identity(..)`
+# and hands it to `OpenShellClient::from_parts` (see `agent::connect_mtls`).
+# Version pinned to match what's already resolved via openshell-sdk's own
+# `tonic` requirement -- not a second, independent copy. `tls-aws-lc` (not
+# `tls-native-roots`) since kamaji-core always pins its own CA explicitly
+# (never relies on system/native root stores), and to stay consistent with
+# the `aws-lc-rs` `CryptoProvider` installed as process default in
+# `kamajid::main()` (see the `rustls` entry above).
+tonic = { version = "0.14", default-features = false, features = [
+    "transport",
+    "tls-aws-lc",
+] }
+# Not published to crates.io (confirmed 404 there) -- pinned to a commit, not
+# a version range, since there is no SemVer safety net. Pinned to tag
+# v0.0.95 (2026-07-30) rather than a raw `main` HEAD sha -- OpenShell cuts
+# lightweight per-release tags despite `workspace.package.version` staying
+# "0.0.0" upstream (an unpublished-crate placeholder, not a real version).
+# Bump process: edit `rev` to a newer tag's commit sha, then run `cargo
+# build`, the full workspace test suite, and the `#[ignore]`d
+# `openshell_smoke_test_*` in kamaji-core/src/agent.rs against a real
+# gateway before merging -- nothing else checks this dependency for you.
+openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "df698042d0c7760f9dc9233b09d45d5f1c219c2b", package = "openshell-sdk" }

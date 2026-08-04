@@ -1,0 +1,20 @@
+# cargo-release config for kamaji. This is a private daemon binary, not a
+# published crate -- `publish = false` here (and in Cargo.toml) keeps
+# `cargo release` from ever attempting a crates.io publish.
+publish = false
+push = true
+sign-commit = false
+sign-tag = false
+tag-name = "v{{version}}"
+pre-release-commit-message = "release: v{{version}}"
+
+# Gate every release on the same checks CI runs, so a bad `make release-*`
+# can't tag/push a version that doesn't build, lint, or pass tests. Runs
+# once per workspace member (kamaji-core/, kamajid/, kamaji/), each time
+# with that member's own directory as cwd, not the workspace root -- hence
+# `-C ..` rather than a bare `make ci`. All three are siblings exactly one
+# level below the root, so this holds regardless of which member is being
+# released. `make ci` itself always runs against the whole `--workspace`
+# regardless of which single crate's version bump triggered it, so running
+# it multiple times per release is redundant but harmless, not incorrect.
+pre-release-hook = ["make", "-C", "..", "ci"]

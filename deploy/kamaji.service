@@ -1,0 +1,57 @@
+[Unit]
+Description=Kamaji Information-Triage Daemon (kamajid)
+After=network.target
+
+[Service]
+Type=simple
+User=kamaji
+WorkingDirectory=/opt/kamaji
+ExecStart=/opt/kamaji/bin/kamajid
+Restart=always
+RestartSec=10s
+
+# Environment (override in /etc/systemd/system/kamaji.service.d/override.conf)
+Environment="ALLOWED_CHAT_IDS=<chat-id-1>,<chat-id-2>"
+Environment="NOTES_REPO_PATH=/opt/kamaji/notes"
+Environment="REDB_PATH=/opt/kamaji/data/kamaji.redb"
+Environment="CLAUDE_BIN=claude"
+Environment="RUST_LOG=kamaji=info,warn"
+
+# Unix socket the kamaji CLI connects to (defaults to ./kamaji.sock, i.e.
+# relative to WorkingDirectory above, if unset).
+# Environment="KAMAJI_SOCKET_PATH=/opt/kamaji/data/kamaji.sock"
+
+# Optional timeouts and retries (defaults shown)
+# Environment="AGENT_TIMEOUT_SECS=120"
+# Environment="GIT_TIMEOUT_SECS=30"
+# Environment="GIT_PUSH_RETRIES=3"
+# Environment="JOB_LEASE_TIMEOUT_SECS=600"
+# Environment="WORKER_POLL_INTERVAL_MS=1000"
+
+# Matrix support (optional, see docs/matrix.md) -- unset MATRIX_HOMESERVER_URL
+# entirely to keep the daemon Telegram-only. When set, MATRIX_USER_ID,
+# MATRIX_ACCESS_TOKEN, MATRIX_DEVICE_ID and ALLOWED_MATRIX_ROOMS are required.
+# Environment="MATRIX_HOMESERVER_URL=https://matrix.example.com"
+# Environment="MATRIX_USER_ID=@kamaji:matrix.example.com"
+# Environment="MATRIX_ACCESS_TOKEN=<bootstrap-access-token-from-docs/matrix.md-step-9>"
+# Environment="MATRIX_DEVICE_ID=<device-id-from-docs/matrix.md-step-9>"
+# Environment="ALLOWED_MATRIX_ROOMS=<room-id-1>,<room-id-2>"
+# Environment="MATRIX_STORE_PATH=/opt/kamaji/data/matrix-store"
+# Environment="MATRIX_MEDIA_TIMEOUT_SECS=30"
+
+# OpenShell runner (optional, see docs/openshell.md and README.md's
+# "OpenShell Runner (optional)" section) -- unset OPENSHELL_GATEWAY_URL
+# entirely to keep kamajid invoking `claude` as a local subprocess
+# (agent::Runner::Direct), byte-for-byte prior behavior. The sandbox named
+# below must already exist and be provisioned out-of-band; kamajid never
+# creates, provisions, or deletes it.
+# Find the real values with the `openshell` CLI rather than guessing:
+#   openshell gateway list   -> ENDPOINT column = OPENSHELL_GATEWAY_URL, check AUTH is
+#                                none/plaintext (kamaji-core has no mTLS/JWT/OIDC support yet)
+#   openshell sandbox list   -> NAME column = OPENSHELL_SANDBOX_NAME, must be Phase: Ready
+# Environment="OPENSHELL_GATEWAY_URL=https://openshell-gateway.example.internal"
+# Environment="OPENSHELL_SANDBOX_NAME=<pre-provisioned-sandbox-name>"
+# Environment="OPENSHELL_READY_TIMEOUT_SECS=30"
+
+[Install]
+WantedBy=multi-user.target

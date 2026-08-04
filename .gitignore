@@ -1,0 +1,8 @@
+/target
+*.redb
+.env
+*.token
+kamaji-debug.log
+*.old
+old/
+scratch/

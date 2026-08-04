@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Bash(sed -n *)",
+      "Bash(cat *)",
+      "Bash(grep -n *)",
+      "Bash(grep -rn *)",
+      "Bash(find *)",
+      "Bash(ls *)",
+      "Bash(cargo build *)",
+      "Bash(cargo test *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "WebFetch",
+      "Read(notes/**)",
+      "Write(notes/**)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(sudo *)"
+    ]
+  }
+}

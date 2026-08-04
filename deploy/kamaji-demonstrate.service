@@ -1,0 +1,18 @@
+[Unit]
+Description=kamaji /demonstrate (link bitacora facts to open goals they demonstrate)
+After=kamaji.service
+Requisite=kamaji.service
+
+[Service]
+Type=oneshot
+User=kamaji
+WorkingDirectory=/opt/kamaji
+ExecStart=/opt/kamaji/bin/kamaji demonstrate
+
+# Output is journal-only for v1 (no Telegram/Matrix push yet -- that's
+# gated on the not-yet-built CliRequest::Notify relay, see TODO.md).
+# Read it with: journalctl -u kamaji-demonstrate.service
+
+# Must match however KAMAJI_SOCKET_PATH is set (or left unset) in
+# kamaji.service -- uncomment and align if kamaji.service overrides it.
+# Environment="KAMAJI_SOCKET_PATH=/opt/kamaji/data/kamaji.sock"
