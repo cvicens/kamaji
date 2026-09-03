@@ -124,6 +124,18 @@ pub enum NoteError {
         #[source]
         source: std::io::Error,
     },
+    /// A caller-supplied fact identifier (`bitacora::FactDetail::wikilink_target`)
+    /// that isn't shaped like one. Distinct from `NotFound` because it means
+    /// the request was malformed -- possibly a path-traversal attempt -- not
+    /// that a well-formed target simply has no file behind it; only
+    /// `bitacora::fact_note_path` constructs it.
+    #[error("invalid fact target: {0}")]
+    InvalidTarget(String),
+    /// A well-formed fact target with nothing behind it. Mirrors
+    /// `ChecklistError::NotFound`'s role for the checklist domains; `notes.rs`
+    /// never constructs either of these two.
+    #[error("{0} not found")]
+    NotFound(String),
 }
 
 #[derive(Debug, thiserror::Error)]

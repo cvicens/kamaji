@@ -9,8 +9,8 @@ use axum::{Json, Router};
 use kamaji_core::chat::{ChatRef, MessageRef};
 use kamaji_core::checklist::{Entry, StatusFilter};
 use kamaji_core::ipc::{CliRequest, CliResponse};
-use kamaji_core::queue::{Job, JobKind, TodoApiOp};
-use kamaji_core::todo;
+use kamaji_core::queue::{ChecklistApiOp, ChecklistDomain, FactApiOp, Job, JobKind};
+use kamaji_core::{bitacora, checklist, goal, todo};
 use serde::{Deserialize, Serialize};
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
@@ -19,10 +19,12 @@ use tower_governor::GovernorLayer;
 use crate::state::DaemonState;
 use crate::transport;
 
-/// The static single-page todo web UI (see TODO.md's "TODO management web
-/// UI" note) -- embedded at compile time rather than read from disk at
-/// startup, matching how this daemon has no other runtime-loaded asset
-/// directory to manage or get the deploy path wrong for.
+/// The static single-page web UI (see TODO.md's "TODO management web UI"
+/// note) -- embedded at compile time rather than read from disk at startup,
+/// matching how this daemon has no other runtime-loaded asset directory to
+/// manage or get the deploy path wrong for. It serves all three domains
+/// (todos, goals, facts) now; the filename predates the other two and is
+/// kept so `include_str!`, CLAUDE.md and git history all still agree.
 const TODO_APP_HTML: &str = include_str!("todo_app.html");
 
 /// State handed to every REST handler. Built once in `run()`, after
@@ -91,6 +93,12 @@ pub async fn run(state: Arc<DaemonState>) {
         .route("/api/cli", post(cli_handler))
         .route("/auth/logout", post(logout_handler))
         .route("/app", get(app_handler))
+        // Todos and goals are the same `checklist` engine with a different
+        // `Config`, so these two route groups differ only in the domain
+        // constant threaded through and in the domain's own closing verb
+        // (`resolve` vs `achieve`) -- kept as each domain's real vocabulary
+        // rather than collapsed to a generic `/close`, which would read
+        // wrong in both.
         .route("/api/todos", get(list_todos_handler).post(add_todo_handler))
         .route(
             "/api/todos/:key",
@@ -98,6 +106,21 @@ pub async fn run(state: Arc<DaemonState>) {
         )
         .route("/api/todos/:key/resolve", post(resolve_todo_handler))
         .route("/api/todos/:key/reopen", post(reopen_todo_handler))
+        .route("/api/goals", get(list_goals_handler).post(add_goal_handler))
+        .route(
+            "/api/goals/:key",
+            patch(edit_goal_handler).delete(delete_goal_handler),
+        )
+        .route("/api/goals/:key/achieve", post(achieve_goal_handler))
+        .route("/api/goals/:key/reopen", post(reopen_goal_handler))
+        // Facts address by path, not by `EntryKey`, so the target rides in
+        // the query string -- see `FactTargetQuery`.
+        .route(
+            "/api/facts",
+            get(list_facts_handler)
+                .patch(edit_fact_handler)
+                .delete(delete_fact_handler),
+        )
         .with_state(rest_state);
 
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
@@ -261,7 +284,7 @@ async fn app_handler() -> Html<&'static str> {
 }
 
 #[derive(Deserialize)]
-struct ListTodosQuery {
+struct ListEntriesQuery {
     status: Option<String>,
 }
 
@@ -279,12 +302,29 @@ fn status_filters(param: Option<&str>) -> Result<&'static [StatusFilter], ApiErr
     }
 }
 
-async fn list_todos_handler(
-    State(state): State<RestState>,
-    headers: HeaderMap,
-    Query(params): Query<ListTodosQuery>,
+/// The `checklist::Config` behind each domain's routes. `rest.rs` needs it
+/// only to *read* (writes go through the queue and are resolved again in
+/// `worker::checklist_api_job`), so this stays a one-line lookup rather than
+/// a shared type between the two crates.
+fn domain_cfg(domain: ChecklistDomain) -> checklist::Config {
+    match domain {
+        ChecklistDomain::Todo => todo::CFG,
+        ChecklistDomain::Goal => goal::CFG,
+    }
+}
+
+/// Shared list handler for both checklist domains.
+///
+/// A direct filesystem read, not routed through the queue -- same
+/// "reads don't need write-serialization" precedent `/status`/`/history`
+/// already set for `CommandMode::Sync` commands (see commands.rs).
+async fn list_entries(
+    state: &RestState,
+    headers: &HeaderMap,
+    domain: ChecklistDomain,
+    params: &ListEntriesQuery,
 ) -> Result<Json<Vec<Entry>>, ApiError> {
-    require_session(&state, &headers).await?;
+    require_session(state, headers).await?;
     // `all` is a REST-only concept, deliberately *not* a new
     // `StatusFilter` variant: `StatusFilter` is the parsed shape of a chat
     // `/todo list [open|close]` argument (see its doc comment), and there's
@@ -294,14 +334,12 @@ async fn list_todos_handler(
     // pushing an unreachable variant down into `checklist.rs`.
     let repo = &state.daemon.core.config.notes_repo_path;
     let filters = status_filters(params.status.as_deref())?;
+    let cfg = domain_cfg(domain);
 
-    // A direct filesystem read, not routed through the queue -- same
-    // "reads don't need write-serialization" precedent `/status`/`/history`
-    // already set for `CommandMode::Sync` commands (see commands.rs).
     let mut entries = Vec::new();
     for filter in filters {
-        entries.extend(todo::list_entries(repo, *filter).map_err(|err| {
-            tracing::error!(%err, "failed to list todos for web api");
+        entries.extend(checklist::list_entries(&cfg, repo, *filter).map_err(|err| {
+            tracing::error!(%err, folder = cfg.folder, "failed to list entries for web api");
             ApiError::Internal
         })?);
     }
@@ -312,24 +350,55 @@ async fn list_todos_handler(
     Ok(Json(entries))
 }
 
-/// Enqueues a `JobKind::TodoApi` write and awaits its JSON reply --
+async fn list_todos_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Query(params): Query<ListEntriesQuery>,
+) -> Result<Json<Vec<Entry>>, ApiError> {
+    list_entries(&state, &headers, ChecklistDomain::Todo, &params).await
+}
+
+async fn list_goals_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Query(params): Query<ListEntriesQuery>,
+) -> Result<Json<Vec<Entry>>, ApiError> {
+    list_entries(&state, &headers, ChecklistDomain::Goal, &params).await
+}
+
+/// Enqueues a `JobKind::ChecklistApi` write and awaits its JSON reply --
 /// deliberately bypasses `transport::dispatch_routed_job`/
 /// `run_cli_style_request`: those require the job to name a
-/// `commands::COMMANDS`-registered command, which `TodoApiOp` intentionally
-/// isn't (see `TodoApiOp`'s doc comment -- `Edit`/`Delete` in particular
+/// `commands::COMMANDS`-registered command, which `ChecklistApiOp`
+/// intentionally isn't (see its doc comment -- `Edit`/`Delete` in particular
 /// must stay unreachable from chat). Still goes through the exact same
 /// `Queue::enqueue` + single sequential worker + `WaiterRegistry` machinery
 /// `run_cli_style_request` uses, so the "no concurrent writes to the notes
 /// repo" guardrail applies identically.
-async fn run_todo_api_op(state: &RestState, op: TodoApiOp) -> Result<Response, ApiError> {
-    let (request_id, rx) = state.daemon.waiters.register();
-    let job = Job {
+async fn run_checklist_api_op(
+    state: &RestState,
+    domain: ChecklistDomain,
+    op: ChecklistApiOp,
+) -> Result<Response, ApiError> {
+    run_queued_write(state, |request_id| Job {
         chat: ChatRef::Rest { request_id },
         reply_to: MessageRef::Rest { request_id },
-        kind: JobKind::TodoApi(op),
-    };
+        kind: JobKind::ChecklistApi { domain, op },
+    })
+    .await
+}
+
+/// The enqueue-and-wait tail shared by every web write (checklist and fact
+/// alike): register a waiter, enqueue a job built around its request id,
+/// and hand the worker's JSON reply straight back to the browser.
+async fn run_queued_write(
+    state: &RestState,
+    build: impl FnOnce(u64) -> Job,
+) -> Result<Response, ApiError> {
+    let (request_id, rx) = state.daemon.waiters.register();
+    let job = build(request_id);
     if let Err(err) = state.daemon.core.queue.enqueue(&job) {
-        tracing::error!(%err, "failed to enqueue todo_api job");
+        tracing::error!(%err, "failed to enqueue web api write job");
         return Err(ApiError::Internal);
     }
 
@@ -337,39 +406,48 @@ async fn run_todo_api_op(state: &RestState, op: TodoApiOp) -> Result<Response, A
     let body = match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(json)) => json,
         Ok(Err(_)) => {
-            tracing::error!("kamajid closed the todo_api reply channel before answering");
+            tracing::error!("kamajid closed the web api reply channel before answering");
             return Err(ApiError::Internal);
         }
         Err(_) => {
-            tracing::error!("timed out waiting for kamajid to process a todo_api request");
+            tracing::error!("timed out waiting for kamajid to process a web api request");
             return Err(ApiError::Internal);
         }
     };
     // Passed straight through rather than deserialized into a Rust type on
     // this side: the JSON was already produced by
-    // `kamaji_core::worker::todo_api_job` for exactly this purpose (see its
-    // `TodoApiReply` doc comment), and the browser is the only real
-    // consumer -- round-tripping through a duplicate struct here would just
-    // be a second place the wire shape could drift out of sync.
+    // `kamaji_core::worker::{checklist_api_job, fact_api_job}` for exactly
+    // this purpose, and the browser is the only real consumer -- round-tripping
+    // through a duplicate struct here would just be a second place the wire
+    // shape could drift out of sync.
     Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
 }
 
 #[derive(Deserialize)]
-struct AddTodoRequest {
+struct AddEntryRequest {
     text: String,
     #[serde(default)]
     tags: Vec<String>,
 }
 
-async fn add_todo_handler(
-    State(state): State<RestState>,
-    headers: HeaderMap,
-    Json(body): Json<AddTodoRequest>,
+#[derive(Deserialize)]
+struct EditEntryRequest {
+    text: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn add_entry_op(
+    state: &RestState,
+    headers: &HeaderMap,
+    domain: ChecklistDomain,
+    body: AddEntryRequest,
 ) -> Result<Response, ApiError> {
-    require_session(&state, &headers).await?;
-    run_todo_api_op(
-        &state,
-        TodoApiOp::Add {
+    require_session(state, headers).await?;
+    run_checklist_api_op(
+        state,
+        domain,
+        ChecklistApiOp::Add {
             text: body.text,
             tags: body.tags,
         },
@@ -377,41 +455,18 @@ async fn add_todo_handler(
     .await
 }
 
-async fn resolve_todo_handler(
-    State(state): State<RestState>,
-    headers: HeaderMap,
-    Path(key): Path<String>,
+async fn edit_entry_op(
+    state: &RestState,
+    headers: &HeaderMap,
+    domain: ChecklistDomain,
+    key: String,
+    body: EditEntryRequest,
 ) -> Result<Response, ApiError> {
-    require_session(&state, &headers).await?;
-    run_todo_api_op(&state, TodoApiOp::Resolve { key }).await
-}
-
-async fn reopen_todo_handler(
-    State(state): State<RestState>,
-    headers: HeaderMap,
-    Path(key): Path<String>,
-) -> Result<Response, ApiError> {
-    require_session(&state, &headers).await?;
-    run_todo_api_op(&state, TodoApiOp::Reopen { key }).await
-}
-
-#[derive(Deserialize)]
-struct EditTodoRequest {
-    text: String,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn edit_todo_handler(
-    State(state): State<RestState>,
-    headers: HeaderMap,
-    Path(key): Path<String>,
-    Json(body): Json<EditTodoRequest>,
-) -> Result<Response, ApiError> {
-    require_session(&state, &headers).await?;
-    run_todo_api_op(
-        &state,
-        TodoApiOp::Edit {
+    require_session(state, headers).await?;
+    run_checklist_api_op(
+        state,
+        domain,
+        ChecklistApiOp::Edit {
             key,
             text: body.text,
             tags: body.tags,
@@ -420,18 +475,205 @@ async fn edit_todo_handler(
     .await
 }
 
-/// Permanently deletes a todo -- the one operation among these that has no
-/// resolve/reopen-style undo (see `TodoApiOp::Delete`'s doc comment). The
-/// warning-before-you-click responsibility lives in `todo_app.html`; this
-/// handler enforces nothing extra beyond the same session check every other
-/// write here requires.
+async fn status_op(
+    state: &RestState,
+    headers: &HeaderMap,
+    domain: ChecklistDomain,
+    key: String,
+    close: bool,
+) -> Result<Response, ApiError> {
+    require_session(state, headers).await?;
+    let op = if close {
+        ChecklistApiOp::Resolve { key }
+    } else {
+        ChecklistApiOp::Reopen { key }
+    };
+    run_checklist_api_op(state, domain, op).await
+}
+
+/// Permanently deletes a checklist entry -- the one operation among these
+/// that has no resolve/reopen-style undo (see `ChecklistApiOp::Delete`'s doc
+/// comment). The warning-before-you-click responsibility lives in
+/// `todo_app.html`; the *refusal* to delete a goal that todos still link to
+/// lives in `worker::checklist_api_job`, so it holds regardless of which
+/// client is calling. This handler enforces nothing extra beyond the same
+/// session check every other write here requires.
+async fn delete_entry_op(
+    state: &RestState,
+    headers: &HeaderMap,
+    domain: ChecklistDomain,
+    key: String,
+) -> Result<Response, ApiError> {
+    require_session(state, headers).await?;
+    run_checklist_api_op(state, domain, ChecklistApiOp::Delete { key }).await
+}
+
+async fn add_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(body): Json<AddEntryRequest>,
+) -> Result<Response, ApiError> {
+    add_entry_op(&state, &headers, ChecklistDomain::Todo, body).await
+}
+
+async fn add_goal_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(body): Json<AddEntryRequest>,
+) -> Result<Response, ApiError> {
+    add_entry_op(&state, &headers, ChecklistDomain::Goal, body).await
+}
+
+async fn edit_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<EditEntryRequest>,
+) -> Result<Response, ApiError> {
+    edit_entry_op(&state, &headers, ChecklistDomain::Todo, key, body).await
+}
+
+async fn edit_goal_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<EditEntryRequest>,
+) -> Result<Response, ApiError> {
+    edit_entry_op(&state, &headers, ChecklistDomain::Goal, key, body).await
+}
+
+async fn resolve_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    status_op(&state, &headers, ChecklistDomain::Todo, key, true).await
+}
+
+async fn achieve_goal_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    status_op(&state, &headers, ChecklistDomain::Goal, key, true).await
+}
+
+async fn reopen_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    status_op(&state, &headers, ChecklistDomain::Todo, key, false).await
+}
+
+async fn reopen_goal_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    status_op(&state, &headers, ChecklistDomain::Goal, key, false).await
+}
+
 async fn delete_todo_handler(
     State(state): State<RestState>,
     headers: HeaderMap,
     Path(key): Path<String>,
 ) -> Result<Response, ApiError> {
+    delete_entry_op(&state, &headers, ChecklistDomain::Todo, key).await
+}
+
+async fn delete_goal_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    delete_entry_op(&state, &headers, ChecklistDomain::Goal, key).await
+}
+
+/// A fact's identity is its note path relative to the repo root
+/// (`bitacora/2026/July/<stamp>-<slug>`), which contains `/`. That rides in
+/// the query string rather than a path segment on purpose: percent-encoded
+/// slashes inside a single route segment are a well-known source of
+/// router-dependent surprise, and this value feeds a filesystem path
+/// resolver -- not somewhere to accept ambiguity about what the server
+/// actually received. `bitacora::fact_note_path` is still the boundary that
+/// validates it; this just makes sure it arrives intact.
+#[derive(Deserialize)]
+struct FactTargetQuery {
+    target: String,
+}
+
+/// Direct filesystem read, same precedent as the checklist list endpoints.
+/// Returns every fact in full (`FactDetail`), not a summary: the window
+/// filters in the UI are a client-side slice of one list, and an edit box
+/// pre-filled from an already-loaded row costs no second round trip.
+async fn list_facts_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<bitacora::FactDetail>>, ApiError> {
     require_session(&state, &headers).await?;
-    run_todo_api_op(&state, TodoApiOp::Delete { key }).await
+    let repo = &state.daemon.core.config.notes_repo_path;
+    let facts = bitacora::list_fact_details(repo).map_err(|err| {
+        tracing::error!(%err, "failed to list facts for web api");
+        ApiError::Internal
+    })?;
+    Ok(Json(facts))
+}
+
+#[derive(Deserialize)]
+struct EditFactRequest {
+    title: String,
+    summary: String,
+    value: i64,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// `description` is deliberately not accepted from the client: it's derived
+/// from `summary` in Rust (`okf::description_from_summary`) and regenerated
+/// on every save, so there is nothing for a caller to set.
+async fn edit_fact_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Query(query): Query<FactTargetQuery>,
+    Json(body): Json<EditFactRequest>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_queued_write(&state, |request_id| Job {
+        chat: ChatRef::Rest { request_id },
+        reply_to: MessageRef::Rest { request_id },
+        kind: JobKind::FactApi(FactApiOp::Edit {
+            target: query.target,
+            title: body.title,
+            summary: body.summary,
+            value: body.value,
+            tags: body.tags,
+        }),
+    })
+    .await
+}
+
+/// Permanently deletes a fact: the note, the companion `.orig` and any
+/// attachment bytes. Unlike a goal delete, this is *not* refused when
+/// something links to it -- a goal's `demonstrated_by` wikilink can't be
+/// partially rewritten the way a todo's can, so the accepted outcome is a
+/// dangling link that the worker's reply names explicitly (see
+/// `worker::fact_api_job`). The confirm dialog in `todo_app.html` says the
+/// same thing before the click.
+async fn delete_fact_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Query(query): Query<FactTargetQuery>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_queued_write(&state, |request_id| Job {
+        chat: ChatRef::Rest { request_id },
+        reply_to: MessageRef::Rest { request_id },
+        kind: JobKind::FactApi(FactApiOp::Delete {
+            target: query.target,
+        }),
+    })
+    .await
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {

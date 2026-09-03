@@ -1228,6 +1228,41 @@ mod tests {
     }
 
     #[test]
+    fn edit_entry_preserves_links_status_and_timestamp() {
+        // The load-bearing case `edit_entry_rewrites_new_format_entry` above
+        // doesn't cover: a *linked*, already-closed entry. A goal's
+        // `demonstrated_by` list is written by `/demonstrate`, and a todo's
+        // `link` list by `/todo link` -- an edit that dropped either would
+        // silently undo work the user never asked to undo, and nothing else
+        // in the pipeline would notice.
+        let dir = tempfile::tempdir().unwrap();
+        let (k, _) = add_entry(&TEST_CFG, dir.path(), when(), &["a".to_string()], "old").unwrap();
+        let first = "bitacora/2026/July/20260714-153045-fixed-prod-outage";
+        let second = "bitacora/2026/August/20260801-090000-shipped-the-thing";
+        add_link(&TEST_CFG, dir.path(), k, first).unwrap();
+        add_link(&TEST_CFG, dir.path(), k, second).unwrap();
+        close_entry(&TEST_CFG, dir.path(), k).unwrap();
+
+        edit_entry(&TEST_CFG, dir.path(), k, &["b".to_string()], "new").unwrap();
+
+        let entries = list_entries(&TEST_CFG, dir.path(), StatusFilter::Closed).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "new");
+        assert_eq!(entries[0].tags, vec!["b"]);
+        assert_eq!(entries[0].status, Status::Closed);
+        assert_eq!(
+            entries[0].links,
+            vec![first.to_string(), second.to_string()]
+        );
+
+        // Creation time is part of the entry's identity (the key encodes the
+        // date), so an edit must not restamp it to "now".
+        let contents =
+            std::fs::read_to_string(dir.path().join("thing/2026/2026-07-17-1.md")).unwrap();
+        assert!(contents.contains("timestamp: 2026-07-17T10:30:00Z\n"));
+    }
+
+    #[test]
     fn edit_entry_missing_key_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(

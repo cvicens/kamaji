@@ -21,9 +21,21 @@ A Rust daemon on a Hetzner VM. Messages (from Telegram, and optionally Matrix �
   todo list. htm is tagged-template JSX-equivalent, so there is **no build
   step**: edit the HTML, rebuild the crate, done. To bump the bundle, re-fetch
   that exact pinned URL and update the sha256 in the comment above it. Keep the
-  component tree keyed by `EntryKey` -- that keyed diffing is the whole reason
-  the layer exists (an open edit box must survive a list re-render with its
-  focus and caret intact).
+  component tree keyed by the item's stable id (`itemId`: `EntryKey` for a
+  todo/goal, `wikilink_target` for a fact) -- that keyed diffing is the whole
+  reason the layer exists (an open edit box must survive a list re-render with
+  its focus and caret intact; the focus half needs `useAutoFocus`, since
+  `autofocus` is only honoured at parse time and every inline editor here is
+  inserted into an already-rendered list).
+  One page, **three domains** (todos, goals, facts), tab-switched. Filename
+  predates the other two and is kept deliberately. Two rules hold across all
+  three: **reads go straight to the filesystem, writes go through
+  `Queue::enqueue` + the single sequential worker** (that split is the "no
+  concurrent writes to the notes repo" guardrail, not an optimization); and
+  every item dates off one accessor (`itemDate` -- `EntryKey` for a checklist
+  entry, `timestamp` frontmatter for a fact), never a per-domain parser. Facts
+  have no open/closed status, so they get no checkbox and no completion ring --
+  don't render either as a disabled or 0/N placeholder.
 
 ## Data model (redb tables)
 - `pending<u64, &str>` — job_id → JSON payload (`Job { chat: ChatRef, reply_to: MessageRef, kind }`), tagged `JobKind::Ingest { raw_text, urls }` or `JobKind::Command { name, args }`. `ChatRef`/`MessageRef` (`src/chat.rs`) are platform-tagged enums (`Telegram { chat_id: i64 }` / `Matrix { room_id: String }`, etc.) — Matrix room/event ids are opaque strings, not integers, so this isn't a bare int field.

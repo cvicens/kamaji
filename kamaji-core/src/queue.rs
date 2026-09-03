@@ -21,22 +21,27 @@ pub struct CommandAttachment {
     pub mime_type: Option<String>,
 }
 
-/// A structured `/todo` write operation from the web UI's REST API
-/// (`kamajid::transport::rest`'s `/api/todos/*` routes) -- distinct from
-/// `JobKind::Command { name: "todo", .. }` because that path is reachable
-/// from chat/CLI, parses free-text args, and replies with a human-formatted
-/// string. This one carries typed fields and its handler
-/// (`worker::todo_api_job`) replies with a JSON string instead, so the
+/// A structured checklist write operation from the web UI's REST API
+/// (`kamajid::transport::rest`'s `/api/todos/*` and `/api/goals/*` routes) --
+/// distinct from `JobKind::Command { name: "todo"|"goal", .. }` because that
+/// path is reachable from chat/CLI, parses free-text args, and replies with a
+/// human-formatted string. This one carries typed fields and its handler
+/// (`worker::checklist_api_job`) replies with a JSON string instead, so the
 /// browser can render structured rows rather than parse chat text back
 /// apart. `key` fields are `EntryKey`'s display string (`"2026-08-03-2"`),
 /// not a structured `EntryKey`, since that's the shape a URL path segment
 /// or JSON request body naturally carries -- parsed back with `.parse()` in
-/// the handler. `Edit`/`Delete` have no `todo::TodoAction` counterpart on
-/// purpose: they're new capabilities scoped to this access point only (see
-/// TODO.md's "TODO management web UI" note).
+/// the handler. `Edit`/`Delete` have no `todo::TodoAction`/`goal::GoalAction`
+/// counterpart on purpose: they're new capabilities scoped to this access
+/// point only (see TODO.md's "TODO management web UI" note).
+///
+/// Domain-agnostic by design: `todo.rs` and `goal.rs` are the same
+/// `checklist` engine with a different `Config` (see `checklist/mod.rs`), so
+/// which domain an op targets is carried beside it in
+/// `JobKind::ChecklistApi`, not baked into a second near-identical enum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op")]
-pub enum TodoApiOp {
+pub enum ChecklistApiOp {
     Add {
         text: String,
         tags: Vec<String>,
@@ -57,6 +62,40 @@ pub enum TodoApiOp {
     },
 }
 
+/// Which `checklist` domain a `ChecklistApiOp` addresses -- the one piece of
+/// information the generic op itself doesn't carry. Maps to a
+/// `checklist::Config` in `worker::checklist_api_job`, which is the only
+/// place that needs to know the concrete folder/noun/verb wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChecklistDomain {
+    Todo,
+    Goal,
+}
+
+/// A structured `/fact` write operation from the web UI's REST API
+/// (`/api/facts`). Deliberately *not* folded into `ChecklistApiOp`: a fact is
+/// not a checklist entry -- it has no `EntryKey`, no open/closed status, and
+/// its identity is a file path (`bitacora::FactDetail::wikilink_target`,
+/// carried here as `target`), so every field a checklist op has would be
+/// wrong for it. There's no `Add`: facts are minted by `/fact`, whose
+/// title/summary/value/slug come from the agent and whose `.orig` preserves
+/// the raw message verbatim -- neither of which a web form has to offer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum FactApiOp {
+    Edit {
+        target: String,
+        title: String,
+        summary: String,
+        value: i64,
+        tags: Vec<String>,
+    },
+    Delete {
+        target: String,
+    },
+}
+
 /// What a job actually does. This is the tagged enum from the spec, matched
 /// on directly by the worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,9 +113,28 @@ pub enum JobKind {
         #[serde(default)]
         attachment: Option<CommandAttachment>,
     },
-    /// See `TodoApiOp`'s doc comment -- never constructed by chat/CLI
-    /// parsing, only by `kamajid::transport::rest`'s `/api/todos/*` routes.
-    TodoApi(TodoApiOp),
+    /// Legacy shape of `ChecklistApi` below, from before goals shared this
+    /// path. Never constructed any more -- kept solely so a `TodoApi` payload
+    /// already sitting in `pending`/`job_history` when this daemon restarts
+    /// still deserializes (same reason `Command::attachment` carries
+    /// `#[serde(default)]`). `worker::process_job` maps it to
+    /// `ChecklistDomain::Todo`, which is the only domain it could ever have
+    /// meant.
+    TodoApi(ChecklistApiOp),
+    /// See `ChecklistApiOp`'s doc comment -- never constructed by chat/CLI
+    /// parsing, only by `kamajid::transport::rest`'s `/api/todos/*` and
+    /// `/api/goals/*` routes. `op` is nested rather than
+    /// `#[serde(flatten)]`ed because the legacy `TodoApi` variant above
+    /// already flattens `ChecklistApiOp`'s own `"op"` tag into this same
+    /// object as a *string*; a flattened new shape couldn't coexist with
+    /// that on the wire.
+    ChecklistApi {
+        domain: ChecklistDomain,
+        op: ChecklistApiOp,
+    },
+    /// See `FactApiOp`'s doc comment -- only constructed by
+    /// `kamajid::transport::rest`'s `/api/facts` routes.
+    FactApi(FactApiOp),
 }
 
 /// The full pending-table payload. `JobKind` alone doesn't carry enough
@@ -395,6 +453,75 @@ mod tests {
 
         // next_id() must not have written anything to `pending`.
         assert_eq!(queue.pending_depth().unwrap(), 1);
+    }
+
+    /// The exact payload shape `pending`/`job_history` held before goals
+    /// shared this path. A daemon restart must still be able to read it --
+    /// that's the whole reason `JobKind::TodoApi` is still a variant.
+    #[test]
+    fn legacy_todo_api_payload_still_deserializes() {
+        let payload = r#"{"chat":{"platform":"Rest","request_id":7},"reply_to":{"platform":"Rest","request_id":7},"kind":{"type":"TodoApi","op":"Resolve","key":"2026-08-03-2"}}"#;
+        let job: Job = serde_json::from_str(payload).expect("legacy payload must still parse");
+        match job.kind {
+            JobKind::TodoApi(ChecklistApiOp::Resolve { key }) => assert_eq!(key, "2026-08-03-2"),
+            other => panic!("expected legacy TodoApi/Resolve, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checklist_api_job_round_trips_through_the_pending_payload() {
+        let (queue, _dir) = test_queue();
+        let job = Job {
+            chat: ChatRef::Rest { request_id: 1 },
+            reply_to: MessageRef::Rest { request_id: 1 },
+            kind: JobKind::ChecklistApi {
+                domain: ChecklistDomain::Goal,
+                op: ChecklistApiOp::Edit {
+                    key: "2026-08-03-2".to_string(),
+                    text: "run a marathon".to_string(),
+                    tags: vec!["health".to_string()],
+                },
+            },
+        };
+        queue.enqueue(&job).unwrap();
+
+        let (_, dequeued) = queue.dequeue().unwrap().unwrap();
+        match dequeued.kind {
+            JobKind::ChecklistApi {
+                domain,
+                op: ChecklistApiOp::Edit { key, text, tags },
+            } => {
+                assert_eq!(domain, ChecklistDomain::Goal);
+                assert_eq!(key, "2026-08-03-2");
+                assert_eq!(text, "run a marathon");
+                assert_eq!(tags, vec!["health"]);
+            }
+            other => panic!("expected ChecklistApi/Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fact_api_job_round_trips_through_the_pending_payload() {
+        let (queue, _dir) = test_queue();
+        let job = Job {
+            chat: ChatRef::Rest { request_id: 2 },
+            reply_to: MessageRef::Rest { request_id: 2 },
+            kind: JobKind::FactApi(FactApiOp::Delete {
+                target: "bitacora/2026/July/20260714-153045-fixed-prod-outage".to_string(),
+            }),
+        };
+        queue.enqueue(&job).unwrap();
+
+        let (_, dequeued) = queue.dequeue().unwrap().unwrap();
+        match dequeued.kind {
+            JobKind::FactApi(FactApiOp::Delete { target }) => {
+                assert_eq!(
+                    target,
+                    "bitacora/2026/July/20260714-153045-fixed-prod-outage"
+                );
+            }
+            other => panic!("expected FactApi/Delete, got {other:?}"),
+        }
     }
 
     #[test]

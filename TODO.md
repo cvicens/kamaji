@@ -574,9 +574,88 @@ shape (superseding the earlier open questions this section started as):
       laptop and a phone (flexbox/grid + a viewport meta tag, no separate
       mobile build). No CORS needed -- same-origin as the REST API it
       calls.
-- [ ] **Not done in this pass**: no equivalent web UI for `/goal` (todo
+- [x] ~~**Not done in this pass**: no equivalent web UI for `/goal` (todo
       only, per the original ask) -- the same `checklist` primitives would
-      make a `goal.rs` version straightforward to add later if wanted.
+      make a `goal.rs` version straightforward to add later if wanted.~~ --
+      done, see "Goals and facts in the web UI" below.
+
+### Goals and facts in the web UI (`/api/goals`, `/api/facts`)
+
+Prompted by "extend `/app` beyond todos so goals and facts are also viewable
+and editable". Todos and goals came out symmetric; facts deliberately did not.
+
+- [x] **Generalised the checklist API rather than duplicating it.**
+      `TodoApiOp` became `ChecklistApiOp` + a `ChecklistDomain` tag, with one
+      worker handler (`worker/checklist_api_job.rs`, was `todo_api_job.rs`)
+      parameterised by `checklist::Config` and one set of domain-generic REST
+      handlers. Chosen over a parallel `GoalApiOp`/`goal_api_job.rs` (a
+      smaller diff, but ~250 duplicated lines to keep in sync, and a third
+      copy the moment facts arrived) because it mirrors how `checklist/mod.rs`
+      already unified the two domains. Message wording comes from `Config`
+      (`command_name`/`closed_verb`/`close_subcommand`) plus a capitalised
+      display noun, so no domain string is hardcoded twice.
+- [x] **Old queue payloads still deserialize.** `JobKind::TodoApi` is kept as
+      a read-only legacy variant (never constructed again) alongside the new
+      `ChecklistApi { domain, op }`; the worker maps it to
+      `ChecklistDomain::Todo`. `op` is nested rather than `#[serde(flatten)]`ed
+      precisely because the legacy shape already flattens `ChecklistApiOp`'s
+      own `"op"` tag into the same object as a string -- the two couldn't
+      coexist flattened. Covered by a test feeding the literal old JSON.
+- [x] **Editing a goal must not clobber `demonstrated_by`.**
+      `checklist::edit_entry` already preserved status/links/timestamp, but no
+      test covered a *linked* entry. Added one in `checklist/mod.rs` and one at
+      the real goal `CFG` in `goal.rs`.
+- [x] **Deleting a goal is refused while any todo links to it**, naming the
+      linking todos. Chosen over dangling wikilinks (silently degrades
+      `/align` and the Obsidian graph) and over scrubbing inbound links (one
+      click rewriting N files the user never sees). Enforced in
+      `worker::checklist_api_job` -- the cross-domain question can only be
+      answered by a caller that sees both domains, and `checklist/mod.rs` must
+      stay domain-agnostic. The UI greys the button out with the same reason
+      before the click; the server is what actually holds the line.
+- [x] **Facts got a fuller read-back, not a widened `FactRecord`.**
+      `bitacora::FactDetail` (+ `read_fact`/`list_fact_details`) is a second
+      projection of the same private parser, so `/demonstrate` doesn't start
+      carrying a body and an attachment path it never looks at.
+- [x] **Three fact-editing guarantees, enforced structurally.** The `.orig` is
+      never touched (`fact_note_path` can only ever yield a `.md`, and
+      `edit_fact` is the only write); the file is never renamed (the name
+      encodes the timestamp + slug that goals' `demonstrated_by` wikilinks
+      point at, so retitling changes frontmatter only); `timestamp` and
+      `attachment` are read back and written straight through. `description`
+      is regenerated from `summary` via `okf::description_from_summary` and is
+      not a client-settable field. `value` is validated to `1..=5`, the same
+      range `prompt::parse_fact_result` enforces.
+- [x] **Facts *are* deletable** (`.md` + `.orig` + attachment bytes), by
+      explicit user decision after the alternative (edit-only, on the strength
+      of the `.orig` guarantee) was put to them. Inbound `demonstrated_by`
+      links are left dangling -- a fact can't hold a backlink and can't be
+      partially unlinked the way a goal can -- but never silently: the confirm
+      dialog names the goals beforehand and the worker's reply names them
+      after. This is the one place kamaji discards a raw message.
+- [x] **A fact's identity rides in the query string**
+      (`PATCH|DELETE /api/facts?target=...`), never a path segment: it
+      contains `/`, and `%2F`-in-a-segment round-tripping is not something to
+      bet a path-traversal boundary on. `fact_note_path` validates it
+      structurally (four segments, month name from `chrono`, stem must be a
+      component `Path::file_name` returns verbatim).
+- [x] **UI**: one page, three tabs, one `itemDate`/`itemId` accessor pair
+      shared by all three domains. The completion ring is scoped to
+      todos/goals; facts show count + average value instead, never a fake 0/N.
+      Fixed a pre-existing bug while there: inline edit boxes carried
+      `autofocus`, which the browser only honours at parse time, so an editor
+      Preact inserted into a rendered list opened unfocused -- `useAutoFocus`
+      replaces it, which is what makes the keyed-diffing caret guarantee
+      actually observable.
+- [ ] **Not done in this pass**: no way to *create* a fact from the web UI.
+      A fact's title/summary/value/slug come from the agent and its `.orig`
+      preserves the raw message verbatim; a web form has neither to offer, and
+      inventing them would break the one property `/fact` exists to hold.
+      `/fact` in chat stays the only way to mint one.
+- [ ] **Not done in this pass**: no way to add or remove a todo->goal or
+      goal->fact link from the web UI. `/todo link` and `/demonstrate` remain
+      the only writers, which is also why a linked goal can only be deleted
+      after unlinking in chat.
 
 ### Newly captured, not designed yet
 

@@ -7,7 +7,7 @@ use crate::checklist::{self, cache::ChecklistCache, Config};
 use crate::error::ChecklistError;
 use crate::goal;
 
-const CFG: Config = Config {
+pub const CFG: Config = Config {
     command_name: "todo",
     folder: "todo",
     plural_noun: "todos",
@@ -225,6 +225,32 @@ pub fn hard_delete_entry(repo_root: &Path, key: EntryKey) -> Result<PathBuf, Che
     checklist::delete_entry(&CFG, repo_root, key)
 }
 
+/// Every todo -- open or closed -- whose `link` list points at
+/// `goal_target` (a wikilink target from `goal::wikilink_target`). The
+/// inbound half of the one-directional todo->goal link: goals carry no
+/// backlinks, so answering "what still references this goal?" means
+/// scanning the todo side, which is exactly what `align_job`'s
+/// `candidate_goals` does per-todo in the other direction.
+///
+/// Both status filters, not just open: a resolved todo's link is still a
+/// real reference into the goal's file, and deleting the goal out from under
+/// it would break it just the same.
+pub fn entries_linking_to(
+    repo_root: &Path,
+    goal_target: &str,
+) -> Result<Vec<EntryKey>, ChecklistError> {
+    let mut keys = Vec::new();
+    for filter in [StatusFilter::Open, StatusFilter::Closed] {
+        for entry in checklist::list_entries(&CFG, repo_root, filter)? {
+            if entry.links.iter().any(|l| l == goal_target) {
+                keys.push(entry.key);
+            }
+        }
+    }
+    keys.sort();
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +383,32 @@ mod tests {
         assert!(list_entries(dir.path(), StatusFilter::Open)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn entries_linking_to_finds_open_and_closed_inbound_links() {
+        // The check behind "a goal that todos still link to can't be
+        // deleted". A *resolved* todo's link is still a real reference into
+        // the goal's file, so it has to count -- listing only open todos
+        // would let a delete through that breaks it.
+        let dir = tempfile::tempdir().unwrap();
+        let (goal_key, _) = goal::add_entry(dir.path(), when(), &[], "a goal").unwrap();
+        let (other_goal, _) = goal::add_entry(dir.path(), when(), &[], "another goal").unwrap();
+        let target = goal::wikilink_target(goal_key);
+
+        let (linked_open, _) = add_entry(dir.path(), when(), &[], "supports it").unwrap();
+        let (linked_closed, _) = add_entry(dir.path(), when(), &[], "also supports it").unwrap();
+        add_entry(dir.path(), when(), &[], "unrelated").unwrap();
+        link_to_goal(dir.path(), linked_open, goal_key).unwrap();
+        link_to_goal(dir.path(), linked_closed, goal_key).unwrap();
+        resolve_entry(dir.path(), linked_closed).unwrap();
+
+        let linking = entries_linking_to(dir.path(), &target).unwrap();
+        assert_eq!(linking, vec![linked_open, linked_closed]);
+
+        // A goal nothing points at has no inbound links at all.
+        let other = goal::wikilink_target(other_goal);
+        assert!(entries_linking_to(dir.path(), &other).unwrap().is_empty());
     }
 
     #[test]

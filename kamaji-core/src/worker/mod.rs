@@ -6,15 +6,16 @@ use crate::fetch;
 use crate::git::PushOutcome;
 use crate::history::{JobHistoryRecord, JobKindSummary, JobStatus};
 use crate::prompt::FetchedContent;
-use crate::queue::{Job, JobKind};
+use crate::queue::{ChecklistDomain, Job, JobKind};
 use crate::state::AppState;
 
 mod align_job;
+mod checklist_api_job;
 mod demonstrate_job;
+mod fact_api_job;
 mod fact_job;
 mod goal_job;
 mod ingest_job;
-mod todo_api_job;
 mod todo_job;
 
 /// Appends a note about the git push outcome to a confirmation message, if
@@ -215,13 +216,48 @@ pub async fn process_job(
                 command_prompt(name, args),
             )
         }
-        // The web UI's structured todo API (see `queue::TodoApiOp`'s doc
-        // comment) -- never invokes Claude, so no tokens; the reply is a
+        // The web UI's structured checklist API (see `queue::ChecklistApiOp`'s
+        // doc comment) -- never invokes Claude, so no tokens; the reply is a
         // JSON string rather than chat-formatted text, and there's no
         // `command_prompt`-shaped debug entry since it didn't come from a
         // `/command` line, so the op's `Debug` form stands in for one.
+        //
+        // The legacy `TodoApi` variant only ever arrives from a payload
+        // queued before goals shared this path, so it can only have meant the
+        // todo domain.
         JobKind::TodoApi(op) => {
-            let (reply, is_success) = todo_api_job::process(state, op).await;
+            let (reply, is_success) =
+                checklist_api_job::process(state, ChecklistDomain::Todo, op).await;
+            (
+                reply,
+                None,
+                if is_success {
+                    JobStatus::Success
+                } else {
+                    JobStatus::Failed
+                },
+                None,
+                format!("{op:?}"),
+            )
+        }
+        JobKind::ChecklistApi { domain, op } => {
+            let (reply, is_success) = checklist_api_job::process(state, *domain, op).await;
+            (
+                reply,
+                None,
+                if is_success {
+                    JobStatus::Success
+                } else {
+                    JobStatus::Failed
+                },
+                None,
+                format!("{domain:?} {op:?}"),
+            )
+        }
+        // The web UI's structured fact API (see `queue::FactApiOp`) -- same
+        // shape as the checklist API above, different domain.
+        JobKind::FactApi(op) => {
+            let (reply, is_success) = fact_api_job::process(state, op).await;
             (
                 reply,
                 None,
@@ -241,6 +277,12 @@ pub async fn process_job(
         JobKind::Command { name, .. } => JobKindSummary::Command { name: name.clone() },
         JobKind::TodoApi(_) => JobKindSummary::Command {
             name: "todo_api".to_string(),
+        },
+        JobKind::ChecklistApi { domain, .. } => JobKindSummary::Command {
+            name: format!("{}_api", domain_name(*domain)),
+        },
+        JobKind::FactApi(_) => JobKindSummary::Command {
+            name: "fact_api".to_string(),
         },
     };
 
@@ -292,6 +334,16 @@ pub async fn dispatch_sync_command(state: &AppState, name: &str, args: &[String]
     }
 
     reply
+}
+
+/// `job_history`'s name for a web checklist write, kept domain-specific
+/// ("todo_api"/"goal_api") so `/history` reads the same way it did before
+/// goals shared this path.
+fn domain_name(domain: ChecklistDomain) -> &'static str {
+    match domain {
+        ChecklistDomain::Todo => "todo",
+        ChecklistDomain::Goal => "goal",
+    }
 }
 
 fn command_prompt(name: &str, args: &[String]) -> String {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#2f9e93">
-<title>kamaji todos</title>
+<title>kamaji</title>
 <style>
   /* Palette follows the "one neutral base, one accent, one text colour"
      rule for minimal UIs -- teal is the single accent and carries every
@@ -157,13 +157,35 @@
     align-items: center; justify-content: center;
     line-height: 1;
   }
+  .score.stat {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 50%; background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+  }
+  .score.stat .count { font-size: 1.5rem; }
+  .score.stat .sub { font-size: 0.5625rem; opacity: 0.75; margin-top: 0.15rem; letter-spacing: 0.02em; }
   .score .count { font-size: 1.1rem; font-weight: 600; }
   .score .label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8; margin-top: 0.25rem; }
 
   /* ---------- filters ---------- */
+  /* Takes the tuck-under-the-hero position the filter card used to hold --
+     it's now the topmost card, and the filter card sits normally below it. */
+  .domain-tabs {
+    display: flex; gap: 0.25rem;
+    margin: -1.75rem 1rem 0; padding: 0.25rem;
+    background: var(--surface); border-radius: 1.125rem; box-shadow: var(--shadow);
+    position: relative; z-index: 2;
+  }
+  .domain-tabs button {
+    flex: 1 1 0; padding: 0.5rem 0.25rem; border: none; border-radius: 9px;
+    background: transparent; color: var(--muted);
+    font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em;
+  }
+  .domain-tabs button.active { background: var(--accent-soft); color: var(--accent-deep); }
+
   .filter-card {
     background: var(--surface);
-    margin: -1.75rem 1rem 0;
+    margin: 0.5rem 1rem 0;
     border-radius: 1.125rem;
     box-shadow: var(--shadow);
     padding: 0.5rem;
@@ -319,6 +341,40 @@
     font-size: 0.8125rem;
   }
   .task-actions button.danger { color: var(--danger); border-color: var(--danger-soft); }
+
+  .task.fact { align-items: flex-start; }
+  .fact-value {
+    flex: 0 0 auto; width: 1.5rem; height: 1.5rem; margin-top: 0.1rem;
+    border-radius: 8px; background: var(--accent-soft); color: var(--accent-deep);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8125rem; font-weight: 700;
+  }
+  .fact-title { font-weight: 600; font-size: 0.9375rem; margin-bottom: 0.15rem; }
+  .fact-note { margin: 0.5rem 0 0; font-size: 0.75rem; color: var(--faint); line-height: 1.45; }
+  .blocked { margin: 0.45rem 0 0; font-size: 0.75rem; color: var(--danger); line-height: 1.45; }
+
+  .field { display: block; margin-bottom: 0.6rem; }
+  .field > span {
+    display: block; margin-bottom: 0.25rem;
+    font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  }
+  .field input[type="text"] {
+    width: 100%; padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface-sunken);
+  }
+  .field input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .field .edit-box { margin-top: 0; }
+  .value-picker { display: flex; gap: 0.3rem; }
+  .value-picker button {
+    width: 2rem; height: 2rem; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--surface-sunken);
+    color: var(--muted); font-size: 0.8125rem; font-weight: 600;
+  }
+  .value-picker button.active {
+    background: var(--accent); border-color: var(--accent);
+    color: var(--on-accent);
+  }
 
   .edit-box {
     width: 100%;
@@ -484,6 +540,7 @@
 
   const TOKEN_KEY = "kamaji_todo_token";
   const SCOPE_KEY = "kamaji_todo_scope";
+  const DOMAIN_KEY = "kamaji_domain";
 
   /* ================= dates ================= */
 
@@ -500,14 +557,29 @@
   function isoDate(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function isoMonth(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1); }
 
-  // An entry's date comes straight out of its key ("YYYY-MM-DD-N") -- the key
-  // *is* the creation date plus position (see checklist::EntryKey), so there's
-  // no separate timestamp to fetch. Built from parts rather than Date.parse so
-  // it lands on local midnight, not UTC midnight, which would shift the day
-  // for anyone west of Greenwich.
-  function entryDate(entry) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})-/.exec(entry.key);
+  // The one entry-date accessor for all three domains -- every date filter,
+  // day heading and grouping goes through it, so there is never more than one
+  // opinion about what day something belongs to.
+  //
+  // A checklist entry dates off its key ("YYYY-MM-DD-N"): the key *is* the
+  // creation date plus position (see checklist::EntryKey), so there's no
+  // separate timestamp to fetch. A fact has no key at all -- it dates off its
+  // `timestamp` frontmatter ("YYYY-MM-DDTHH:MM:SSZ"), which is the same
+  // instant its filename encodes. Both are built from parts rather than
+  // Date.parse so they land on local midnight, not UTC midnight, which would
+  // shift the day for anyone west of Greenwich.
+  function itemDate(item) {
+    const source = item.key || item.timestamp || "";
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(source);
     return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  }
+
+  // An item's stable identity, and so its `key=` prop in every list below:
+  // the `EntryKey` string for a todo/goal, the wikilink target (its note path)
+  // for a fact. Keyed diffing is the whole reason the component layer exists
+  // -- an open edit box has to survive the list re-render that follows a save.
+  function itemId(item) {
+    return item.key || item.wikilink_target;
   }
 
   const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -534,9 +606,9 @@
 
   /* ================= scope ================= */
 
-  function inScope(entry, scope, anchor) {
+  function inScope(item, scope, anchor) {
     if (scope === "all") return true;
-    const d = entryDate(entry);
+    const d = itemDate(item);
     if (!d) return false;
     if (scope === "day") return sameDay(d, anchor);
     if (scope === "month") {
@@ -546,20 +618,56 @@
     return d >= from && d < addDays(from, 7);
   }
 
-  function groupByDay(entries) {
+  function groupByDay(items) {
     const groups = [];
     let current = null;
-    for (const entry of entries) {
-      const d = entryDate(entry);
+    for (const item of items) {
+      const d = itemDate(item);
       const stamp = d ? d.getTime() : 0;
       if (!current || current.stamp !== stamp) {
         current = { stamp, date: d, entries: [] };
         groups.push(current);
       }
-      current.entries.push(entry);
+      current.entries.push(item);
     }
     return groups;
   }
+
+  /* ================= domains ================= */
+
+  /* The three things this page shows, and every way they differ. Todos and
+     goals are the same `checklist` engine with different wording (see
+     checklist/mod.rs), so they differ only in strings here; facts are a
+     genuinely different shape -- no open/closed status, so no checkbox, no
+     completion ring, and an editor with real fields instead of one text box. */
+  const DOMAINS = {
+    todo: {
+      id: "todo", tab: "Todos", one: "todo", eyebrow: "Focus to-do",
+      list: "/api/todos?status=all", base: "/api/todos",
+      closeVerb: "resolve", closedLabel: "Completed", scoreLabel: "Tasks",
+      addTitle: "New todo",
+      addPlaceholder: "What needs doing?\n#tags and links work right in the text.",
+      emptyDone: "Everything here is done.", emptyNone: "Nothing scheduled here.",
+      emptyHintDone: "Enjoy the quiet.", emptyHintNone: "Tap + to add the first one.",
+    },
+    goal: {
+      id: "goal", tab: "Goals", one: "goal", eyebrow: "What you're working towards",
+      list: "/api/goals?status=all", base: "/api/goals",
+      closeVerb: "achieve", closedLabel: "Achieved", scoreLabel: "Goals",
+      addTitle: "New goal",
+      addPlaceholder: "What are you working towards?\n#tags link goals to the todos that support them.",
+      emptyDone: "Every goal here is achieved.", emptyNone: "No goals set for this period.",
+      emptyHintDone: "Time to set the next one.", emptyHintNone: "Tap + to set one.",
+    },
+    fact: {
+      id: "fact", tab: "Facts", one: "fact", eyebrow: "What you actually did",
+      list: "/api/facts", base: "/api/facts",
+      emptyNone: "Nothing logged here.",
+      emptyHintNone: "Facts are logged with /fact in chat, not from this page.",
+    },
+  };
+
+  const DOMAIN_IDS = ["todo", "goal", "fact"];
 
   /* ================= text ================= */
 
@@ -578,6 +686,16 @@
       out.push(rest);
     }
     return out;
+  }
+
+  function blockedReason(keys) {
+    const one = keys.length === 1;
+    return keys.length + (one ? " todo still links" : " todos still link") +
+      " to this goal (" + keys.join(", ") + "). Unlink " + (one ? "it" : "them") + " first.";
+  }
+
+  function capitalize(word) {
+    return word ? word[0].toUpperCase() + word.slice(1) : "";
   }
 
   function linkify(text) {
@@ -611,7 +729,7 @@
   /* Completeness meter: the ring leaves the count in the middle, which is the
      part people actually read -- radial progress only earns its space if the
      number lives at its centre. */
-  function ScoreRing({ done, total }) {
+  function ScoreRing({ done, total, label }) {
     const r = 40;
     const circumference = 2 * Math.PI * r;
     const ratio = total === 0 ? 0 : done / total;
@@ -627,22 +745,51 @@
         </svg>
         <div class="readout">
           <span class="count">${done}/${total}</span>
-          <span class="label">${total === 1 ? "Task" : "Tasks"}</span>
+          <span class="label">${label}</span>
         </div>
       </div>`;
   }
 
-  function Hero({ done, total, onLogout }) {
+  /* Facts have no open/closed status, so there is no ratio to draw -- a ring
+     stuck at 0/N would be a lie dressed as a measurement. They get the two
+     numbers that do mean something for a log: how much landed in this window,
+     and how heavy it was. */
+  function FactScore({ facts }) {
+    const total = facts.length;
+    const avg = total === 0
+      ? null
+      : Math.round((facts.reduce((sum, f) => sum + (f.value || 0), 0) / total) * 10) / 10;
+    return html`
+      <div class="score stat">
+        <span class="count">${total}</span>
+        <span class="label">${total === 1 ? "Fact" : "Facts"}</span>
+        <span class="sub">${avg === null ? "—" : "avg value " + avg}</span>
+      </div>`;
+  }
+
+  function Hero({ domain, done, total, facts, onLogout }) {
     const now = new Date();
     return html`
       <div class="hero">
         <div>
-          <p class="eyebrow">Focus to-do</p>
+          <p class="eyebrow">${domain.eyebrow}</p>
           <h1>${greetingFor(now)}</h1>
           <p class="today">${dayHeading(startOfDay(now))}, ${shortDate(now)}</p>
           <button id="logout-btn" onClick=${onLogout}>Log out</button>
         </div>
-        <${ScoreRing} done=${done} total=${total} />
+        ${domain.id === "fact"
+          ? html`<${FactScore} facts=${facts} />`
+          : html`<${ScoreRing} done=${done} total=${total} label=${domain.scoreLabel} />`}
+      </div>`;
+  }
+
+  function DomainTabs({ current, onSelect }) {
+    return html`
+      <div class="domain-tabs" role="tablist">
+        ${DOMAIN_IDS.map((id) => html`
+          <button key=${id} role="tab" aria-selected=${current === id}
+                  class=${current === id ? "active" : ""}
+                  onClick=${() => onSelect(id)}>${DOMAINS[id].tab}</button>`)}
       </div>`;
   }
 
@@ -706,12 +853,14 @@
      the component layer: the list re-renders on every mutation, and keyed
      diffing means an open edit box keeps its focus, caret and scroll position
      instead of being rebuilt from scratch underneath the cursor. */
-  function Task({ entry, onToggle, onSave, onDelete }) {
+  function Task({ entry, domain, blockedBy, onToggle, onSave, onDelete }) {
     const [expanded, setExpanded] = useState(false);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(entry.text);
     const [busy, setBusy] = useState(false);
+    const editRef = useAutoFocus(editing);
     const done = entry.status === "closed";
+    const blocked = !!(blockedBy && blockedBy.length);
 
     const beginEdit = () => { setDraft(entry.text); setEditing(true); setExpanded(false); };
 
@@ -727,7 +876,7 @@
     const body = editing
       ? html`
         <div>
-          <textarea class="edit-box" value=${draft} autofocus
+          <textarea class="edit-box" value=${draft} ref=${editRef}
                     onInput=${(e) => setDraft(e.target.value)}
                     onKeyDown=${(e) => {
                       if (e.key === "Escape") setEditing(false);
@@ -755,15 +904,23 @@
           ${entry.links.length > 0 && html`
             <div class="task-links">↳ ${entry.links.join(", ")}</div>`}
           ${expanded && html`
-            <div class="task-actions">
-              <button type="button" onClick=${beginEdit}>Edit</button>
-              <button type="button" class="danger" onClick=${() => onDelete(entry)}>Delete</button>
+            <div>
+              <div class="task-actions">
+                <button type="button" onClick=${beginEdit}>Edit</button>
+                ${/* A goal that todos still link to can't be deleted -- the
+                      server refuses it (see worker::checklist_api_job), and
+                      the reason is shown here rather than only after a
+                      pointless click. */ ""}
+                <button type="button" class="danger" disabled=${blocked}
+                        onClick=${() => onDelete(entry)}>Delete</button>
+              </div>
+              ${blocked && html`<p class="blocked">${blockedReason(blockedBy)}</p>`}
             </div>`}
         </div>`;
 
     return html`
       <div class=${"task" + (done ? " done" : "")}>
-        <button class="check" aria-label=${done ? "Reopen" : "Complete"}
+        <button class="check" aria-label=${done ? "Reopen" : capitalize(domain.closeVerb)}
                 onClick=${() => onToggle(entry)}>
           <${Icon} d=${CHECK_PATH} size=${12} sw=${3} />
         </button>
@@ -774,20 +931,24 @@
       </div>`;
   }
 
-  function EmptyState({ hasCompleted }) {
+  function EmptyState({ domain, hasCompleted }) {
     return html`
       <div class="empty">
         <div class="glyph"><${Icon} d=${CHECK_PATH} size=${24} sw=${2} /></div>
-        <p>${hasCompleted ? "Everything here is done." : "Nothing scheduled here."}</p>
-        <p class="hint">${hasCompleted ? "Enjoy the quiet." : "Tap + to add the first one."}</p>
+        <p>${hasCompleted ? domain.emptyDone : domain.emptyNone}</p>
+        <p class="hint">${hasCompleted ? domain.emptyHintDone : domain.emptyHintNone}</p>
       </div>`;
   }
 
-  function OpenList({ entries, scope, taskProps }) {
+  /* One list renderer for all three domains: the day grouping and the
+     period-scoped headings are identical, only the row component differs.
+     `row` is passed in rather than branched on here so a fourth domain would
+     be a new component, not a new `if`. */
+  function ItemList({ entries, scope, row }) {
     // A single-day view needs no day headings -- the period bar above already
     // says which day this is.
     if (scope === "day") {
-      return html`${entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}`;
+      return html`${entries.map(row)}`;
     }
     return html`${groupByDay(entries).map((g) => html`
       <div key=${g.stamp}>
@@ -795,26 +956,160 @@
           <span>${g.date ? dayHeading(g.date) : "Undated"}</span>
           <span class="n">${g.entries.length}</span>
         </div>
-        ${g.entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}
+        ${g.entries.map(row)}
       </div>`)}`;
   }
 
   /* Completed work collapses out of the way -- present for the score and for
      reopening, but never competing with what is still open. */
-  function DoneSection({ entries, taskProps }) {
+  function DoneSection({ entries, domain, row }) {
     const [open, setOpen] = useState(false);
     if (entries.length === 0) return null;
     return html`
       <div id="done-section">
         <button id="done-toggle" class=${open ? "open" : ""} onClick=${() => setOpen(!open)}>
           <span class="caret"><${Icon} d=${CHEVRON_R} size=${12} sw=${3} /></span>
-          <span>Completed · ${entries.length}</span>
+          <span>${domain.closedLabel} · ${entries.length}</span>
         </button>
-        ${open && html`
-          <div id="done-list">
-            ${entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}
-          </div>`}
+        ${open && html`<div id="done-list">${entries.map(row)}</div>`}
       </div>`;
+  }
+
+  const VALUES = [1, 2, 3, 4, 5];
+
+  /* A fact is not a task, so this is a sibling of `Task`, not a variant of it:
+     there is no open/closed status, which means no checkbox to render (a dead
+     one would invite a click that can never do anything) and no completion to
+     score. The value badge takes the checkbox's place in the layout so the
+     two lists still read as one page.
+
+     Editing needs four real fields rather than one text box: a fact's tags are
+     stored, not extracted from the body the way a todo's are, and title,
+     summary and value are separate stored fields. `description` is absent on
+     purpose -- it's derived from the summary in Rust
+     (okf::description_from_summary) and regenerated on every save. */
+  function FactCard({ fact, linkedGoals, onSave, onDelete }) {
+    const [expanded, setExpanded] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const titleRef = useAutoFocus(editing);
+
+    const beginEdit = () => {
+      setDraft({
+        title: fact.title,
+        summary: fact.summary,
+        value: fact.value,
+        tags: fact.tags.join(" "),
+      });
+      setEditing(true);
+      setExpanded(false);
+    };
+
+    const save = async () => {
+      if (!draft || !draft.title.trim() || !draft.summary.trim()) return;
+      setBusy(true);
+      const ok = await onSave(fact, {
+        title: draft.title.trim(),
+        summary: draft.summary.trim(),
+        value: draft.value,
+        tags: draft.tags.split(/[\s,]+/).map((t) => t.replace(/^#/, "")).filter(Boolean),
+      });
+      setBusy(false);
+      if (ok) setEditing(false);
+    };
+
+    const set = (field) => (e) => setDraft(Object.assign({}, draft, { [field]: e.target.value }));
+
+    const body = editing
+      ? html`
+        <div>
+          <label class="field">
+            <span>Title</span>
+            <input type="text" value=${draft.title} ref=${titleRef} onInput=${set("title")} />
+          </label>
+          <label class="field">
+            <span>What happened</span>
+            <textarea class="edit-box" value=${draft.summary} onInput=${set("summary")}
+                      onKeyDown=${(e) => {
+                        if (e.key === "Escape") setEditing(false);
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save();
+                      }} />
+          </label>
+          <label class="field">
+            <span>Tags</span>
+            <input type="text" value=${draft.tags} placeholder="ops incident"
+                   onInput=${set("tags")} />
+          </label>
+          <div class="field">
+            <span>Value</span>
+            <div class="value-picker">
+              ${VALUES.map((v) => html`
+                <button key=${v} type="button" class=${draft.value === v ? "active" : ""}
+                        onClick=${() => setDraft(Object.assign({}, draft, { value: v }))}>${v}</button>`)}
+            </div>
+          </div>
+          <div class="task-actions">
+            <button type="button" disabled=${busy || !draft.title.trim() || !draft.summary.trim()}
+                    onClick=${save}>${busy ? "Saving…" : "Save"}</button>
+            <button type="button" onClick=${() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>`
+      : html`
+        <div>
+          <div class="fact-title">${fact.title}</div>
+          <div class="task-text" dangerouslySetInnerHTML=${{ __html: linkify(fact.summary) }} />
+          ${(fact.tags.length > 0 || expanded) && html`
+            <div class="task-meta">
+              <${TagChips} tags=${fact.tags} />
+              ${expanded && html`<span class="chip plain">${fact.wikilink_target}</span>`}
+            </div>`}
+          ${fact.attachment && html`
+            <div class="task-links">📎 ${fact.attachment}</div>`}
+          ${linkedGoals.length > 0 && html`
+            <div class="task-links">↳ demonstrates ${linkedGoals.join(", ")}</div>`}
+          ${expanded && html`
+            <div>
+              <div class="task-actions">
+                <button type="button" onClick=${beginEdit}>Edit</button>
+                <button type="button" class="danger" onClick=${() => onDelete(fact)}>Delete</button>
+              </div>
+              <p class="fact-note">
+                ${fact.has_orig
+                  ? "Editing rewrites this note only — the original message is kept verbatim in .orig."
+                  : "This entry has no .orig companion file."}
+              </p>
+            </div>`}
+        </div>`;
+
+    return html`
+      <div class="task fact">
+        <div class="fact-value" aria-label=${"Value " + fact.value + " of 5"}>${fact.value}</div>
+        <div class="task-body">${body}</div>
+        ${!editing && html`
+          <button class="more" aria-label="More actions"
+                  onClick=${() => setExpanded(!expanded)}>⋯</button>`}
+      </div>`;
+  }
+
+  /* `autofocus` is an attribute the browser only acts on while parsing, so an
+     element Preact inserts into an already-rendered list gets the attribute and
+     no focus. Both inline editors below open exactly that way, so focus has to
+     be asked for explicitly -- without this the caret survival that keyed
+     diffing buys is moot, because the caret was never in the box to begin with.
+     (The two <dialog> fields are unaffected: showModal() honours autofocus.) */
+  function useAutoFocus(active) {
+    const ref = useRef(null);
+    useEffect(() => {
+      const el = ref.current;
+      if (!active || !el) return;
+      el.focus();
+      // Caret at the end, not selecting the whole value -- an edit box is for
+      // amending what's there, and select-all makes the first keystroke
+      // destructive.
+      if (el.setSelectionRange) el.setSelectionRange(el.value.length, el.value.length);
+    }, [active]);
+    return ref;
   }
 
   // A <dialog> is imperative by nature (showModal/close), so the one place the
@@ -839,7 +1134,7 @@
     return ref;
   }
 
-  function ComposeDialog({ open, onClose, onAdd }) {
+  function ComposeDialog({ open, domain, onClose, onAdd }) {
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
     const ref = useDialog(open, onClose);
@@ -856,9 +1151,9 @@
     return html`
       <dialog id="compose-dialog" ref=${ref}>
         <div class="sheet">
-          <h2>New todo</h2>
+          <h2>${domain.addTitle}</h2>
           <textarea id="new-text" value=${text} autofocus
-                    placeholder=${"What needs doing?\n#tags and links work right in the text."}
+                    placeholder=${domain.addPlaceholder}
                     onInput=${(e) => setText(e.target.value)}
                     onKeyDown=${(e) => {
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
@@ -873,15 +1168,19 @@
       </dialog>`;
   }
 
-  function DeleteDialog({ entry, onClose, onConfirm }) {
-    const ref = useDialog(!!entry, onClose);
+  /* One confirm dialog, three different truths to tell. What a delete actually
+     costs differs per domain -- a todo loses one file, a fact loses its raw
+     original message and any attached document, and a goal that something
+     still links to can't be deleted at all -- so the copy is built by the
+     caller from what it knows, not guessed at here. */
+  function DeleteDialog({ target, onClose, onConfirm }) {
+    const ref = useDialog(!!target, onClose);
     return html`
       <dialog id="delete-dialog" ref=${ref}>
         <div class="sheet">
           <h2>Delete permanently?</h2>
-          <p class="strong">${entry ? entry.text : ""}</p>
-          <p>This removes the file and commits the removal. Unlike completing a
-             todo, there is no reopening this one.</p>
+          <p class="strong">${target ? target.label : ""}</p>
+          ${target && target.lines.map((line, i) => html`<p key=${i}>${line}</p>`)}
           <div class="sheet-actions">
             <button class="btn" type="button" onClick=${onClose}>Cancel</button>
             <button class="btn danger" type="button" onClick=${onConfirm}>Delete</button>
@@ -945,7 +1244,7 @@
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
           </div>
-          <h1>kamaji todos</h1>
+          <h1>kamaji</h1>
           <p class="sub">Enter the code from your authenticator</p>
           <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code"
                  pattern="[0-9]*" maxlength="6" placeholder="······" required autofocus
@@ -960,7 +1259,15 @@
 
   function App() {
     const [authed, setAuthed] = useState(!!token());
-    const [entries, setEntries] = useState([]);
+    // One store per domain, all three loaded together: goal deletion is gated
+    // on what todos link to it, and a fact card names the goals it
+    // demonstrates, so no tab is self-sufficient anyway -- and switching tabs
+    // then costs no round trip.
+    const [data, setData] = useState({ todo: [], goal: [], fact: [] });
+    const [domainId, setDomainId] = useState(() => {
+      const saved = safeGet(DOMAIN_KEY);
+      return DOMAIN_IDS.includes(saved) ? saved : "todo";
+    });
     const [scope, setScope] = useState(() => {
       const saved = safeGet(SCOPE_KEY);
       return ["day", "week", "month", "all"].includes(saved) ? saved : "day";
@@ -969,6 +1276,8 @@
     const [note, setNote] = useState(null);
     const [composing, setComposing] = useState(false);
     const [deleting, setDeleting] = useState(null);
+
+    const domain = DOMAINS[domainId];
 
     const notify = useCallback((text, ok) => {
       setNote({ text, ok: ok === true, at: Date.now() });
@@ -995,15 +1304,23 @@
       if (!res.ok) {
         throw new Error((data && (data.error || data.message)) || ("request failed (" + res.status + ")"));
       }
+      // A queued write answers 200 with `{ok: false, message}` when the
+      // operation itself was refused (a goal that todos still link to, a fact
+      // value out of range) -- that is a failure the user has to see, not a
+      // success with a note attached.
+      if (data && data.ok === false) throw new Error(data.message || "request failed");
       return data;
     }, []);
 
     const reload = useCallback(async () => {
       try {
-        // One `status=all` read rather than two round trips: the completion
-        // score needs both halves of the same window, and every scope filter
-        // below is a pure client-side slice of this one list.
-        setEntries(await api("/api/todos?status=all"));
+        // `status=all` for the checklist domains rather than two round trips:
+        // the completion score needs both halves of the same window, and every
+        // scope filter below is a pure client-side slice of these lists.
+        const [todo, goal, fact] = await Promise.all([
+          api(DOMAINS.todo.list), api(DOMAINS.goal.list), api(DOMAINS.fact.list),
+        ]);
+        setData({ todo, goal, fact });
       } catch (err) {
         notify(err.message);
       }
@@ -1011,39 +1328,77 @@
 
     useEffect(() => { if (authed) reload(); }, [authed, reload]);
 
+    const items = data[domainId] || [];
     const scoped = useMemo(
-      () => entries.filter((e) => inScope(e, scope, anchor)),
-      [entries, scope, anchor]
+      () => items.filter((e) => inScope(e, scope, anchor)),
+      [items, scope, anchor]
     );
     const open = useMemo(() => scoped.filter((e) => e.status === "open"), [scoped]);
     const closed = useMemo(() => scoped.filter((e) => e.status === "closed"), [scoped]);
 
+    // Which todos link to each goal, and which goals to each fact. Both are
+    // the inbound half of a one-directional link (todo -> goal, goal -> fact),
+    // so they can only be answered by scanning the linking side -- exactly
+    // what the daemon does for the same two questions.
+    const goalBacklinks = useMemo(() => {
+      const map = {};
+      for (const todo of data.todo) {
+        for (const link of todo.links) (map[link] = map[link] || []).push(todo.key);
+      }
+      return map;
+    }, [data.todo]);
+
+    const factBacklinks = useMemo(() => {
+      const map = {};
+      for (const goal of data.goal) {
+        for (const link of goal.links) (map[link] = map[link] || []).push(goal.key);
+      }
+      return map;
+    }, [data.goal]);
+
+    const goalLinksFor = useCallback(
+      (entry) => goalBacklinks["goals/" + entry.key.slice(0, 4) + "/" + entry.key] || [],
+      [goalBacklinks]
+    );
+
     const onToggle = useCallback(async (entry) => {
-      const action = entry.status === "closed" ? "reopen" : "resolve";
+      const action = entry.status === "closed" ? "reopen" : domain.closeVerb;
       try {
-        await api("/api/todos/" + encodeURIComponent(entry.key) + "/" + action, { method: "POST" });
+        await api(domain.base + "/" + encodeURIComponent(entry.key) + "/" + action, { method: "POST" });
         await reload();
       } catch (err) { notify(err.message); }
-    }, [api, reload, notify]);
+    }, [api, reload, notify, domain]);
 
     const onSave = useCallback(async (entry, text) => {
       try {
-        await api("/api/todos/" + encodeURIComponent(entry.key), {
+        await api(domain.base + "/" + encodeURIComponent(entry.key), {
           method: "PATCH",
           body: JSON.stringify({ text, tags: extractTags(text) }),
         });
         await reload();
         return true;
       } catch (err) { notify(err.message); return false; }
+    }, [api, reload, notify, domain]);
+
+    const onSaveFact = useCallback(async (fact, fields) => {
+      try {
+        await api("/api/facts?target=" + encodeURIComponent(fact.wikilink_target), {
+          method: "PATCH",
+          body: JSON.stringify(fields),
+        });
+        await reload();
+        notify("Fact updated", true);
+        return true;
+      } catch (err) { notify(err.message); return false; }
     }, [api, reload, notify]);
 
     const onAdd = useCallback(async (text) => {
       try {
-        await api("/api/todos", {
+        await api(domain.base, {
           method: "POST",
           body: JSON.stringify({ text, tags: extractTags(text) }),
         });
-        // A new todo is always filed under today, so a stale day/week/month
+        // A new entry is always filed under today, so a stale day/week/month
         // anchor would swallow it silently -- snap back to now rather than
         // letting a successful add look like a failure.
         if (scope !== "all") setAnchor(startOfDay(new Date()));
@@ -1052,26 +1407,64 @@
         notify("Added", true);
         return true;
       } catch (err) { notify(err.message); return false; }
-    }, [api, reload, notify, scope]);
+    }, [api, reload, notify, scope, domain]);
+
+    /* Every delete goes through one confirm dialog, but each domain has to say
+       what it actually costs -- see DeleteDialog. */
+    const askDeleteEntry = useCallback((entry) => {
+      setDeleting({
+        label: entry.text,
+        lines: [
+          "This removes the file and commits the removal. Unlike " +
+            (domainId === "goal" ? "achieving a goal" : "completing a todo") +
+            ", there is no reopening this one.",
+        ],
+        run: () => api(domain.base + "/" + encodeURIComponent(entry.key), { method: "DELETE" }),
+      });
+    }, [api, domain, domainId]);
+
+    const askDeleteFact = useCallback((fact) => {
+      const linked = factBacklinks[fact.wikilink_target] || [];
+      const files = ["the note"]
+        .concat(fact.has_orig ? ["the original message (.orig)"] : [])
+        .concat(fact.attachment ? ["the attached " + fact.attachment.split("/").pop()] : []);
+      const lines = [
+        "This permanently removes " + files.join(", ") + ", and commits the removal.",
+      ];
+      if (linked.length > 0) {
+        lines.push(
+          linked.length + " goal" + (linked.length === 1 ? "" : "s") + " (" + linked.join(", ") +
+          ") demonstrate" + (linked.length === 1 ? "s" : "") + " this fact. Those links will be " +
+          "left pointing at a file that no longer exists."
+        );
+      }
+      setDeleting({
+        label: fact.title,
+        lines,
+        run: () => api("/api/facts?target=" + encodeURIComponent(fact.wikilink_target), { method: "DELETE" }),
+      });
+    }, [api, factBacklinks]);
 
     const onConfirmDelete = useCallback(async () => {
-      const entry = deleting;
+      const pending = deleting;
       setDeleting(null);
-      if (!entry) return;
+      if (!pending) return;
       try {
-        await api("/api/todos/" + encodeURIComponent(entry.key), { method: "DELETE" });
+        await pending.run();
         await reload();
+        notify("Deleted", true);
       } catch (err) { notify(err.message); }
-    }, [deleting, api, reload, notify]);
+    }, [deleting, reload, notify]);
 
     const onLogout = useCallback(async () => {
       try { await api("/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
       localStorage.removeItem(TOKEN_KEY);
       setAuthed(false);
-      setEntries([]);
+      setData({ todo: [], goal: [], fact: [] });
     }, [api]);
 
     const onScope = useCallback((next) => { setScope(next); safeSet(SCOPE_KEY, next); }, []);
+    const onDomain = useCallback((next) => { setDomainId(next); safeSet(DOMAIN_KEY, next); }, []);
 
     if (!authed) {
       return html`
@@ -1079,32 +1472,52 @@
         <${Banner} note=${note} />`;
     }
 
-    const taskProps = { onToggle, onSave, onDelete: setDeleting };
+    const isFacts = domainId === "fact";
+    const taskRow = (e) => html`
+      <${Task} key=${itemId(e)} entry=${e} domain=${domain}
+               blockedBy=${domainId === "goal" ? goalLinksFor(e) : null}
+               onToggle=${onToggle} onSave=${onSave} onDelete=${askDeleteEntry} />`;
+    const factRow = (f) => html`
+      <${FactCard} key=${itemId(f)} fact=${f}
+                   linkedGoals=${factBacklinks[f.wikilink_target] || []}
+                   onSave=${onSaveFact} onDelete=${askDeleteFact} />`;
+
+    // Facts have no open/closed split: the whole window is the list, and there
+    // is no completed section under it.
+    const listed = isFacts ? scoped : open;
     const total = scoped.length;
 
     return html`
       <div id="app">
-        <${Hero} done=${closed.length} total=${total} onLogout=${onLogout} />
+        <${Hero} domain=${domain} done=${closed.length} total=${total}
+                 facts=${scoped} onLogout=${onLogout} />
+        <${DomainTabs} current=${domainId} onSelect=${onDomain} />
         <${FilterCard} scope=${scope} anchor=${anchor} onScope=${onScope} onAnchor=${setAnchor} />
         <main>
           <div id="list">
-            ${open.length === 0
-              ? html`<${EmptyState} hasCompleted=${closed.length > 0} />`
-              : html`<${OpenList} entries=${open} scope=${scope} taskProps=${taskProps} />`}
+            ${listed.length === 0
+              ? html`<${EmptyState} domain=${domain} hasCompleted=${closed.length > 0} />`
+              : html`<${ItemList} entries=${listed} scope=${scope}
+                                  row=${isFacts ? factRow : taskRow} />`}
           </div>
-          <${DoneSection} entries=${closed} taskProps=${taskProps} />
+          ${!isFacts && html`
+            <${DoneSection} entries=${closed} domain=${domain} row=${taskRow} />`}
           <footer class="tally">
             ${total === 0 ? ""
+              : isFacts ? total + (total === 1 ? " fact" : " facts") + " logged here."
               : open.length === 0 ? "All " + total + " done. Nothing left here."
               : open.length + " of " + total + " still open."}
           </footer>
         </main>
       </div>
-      <button id="fab" aria-label="Add todo" onClick=${() => setComposing(true)}>
-        <${Icon} d="M12 5v14M5 12h14" size=${24} />
-      </button>
-      <${ComposeDialog} open=${composing} onClose=${() => setComposing(false)} onAdd=${onAdd} />
-      <${DeleteDialog} entry=${deleting} onClose=${() => setDeleting(null)} onConfirm=${onConfirmDelete} />
+      ${!isFacts && html`
+        <button id="fab" aria-label=${"Add " + domain.one} onClick=${() => setComposing(true)}>
+          <${Icon} d="M12 5v14M5 12h14" size=${24} />
+        </button>`}
+      <${ComposeDialog} open=${composing} domain=${domain}
+                        onClose=${() => setComposing(false)} onAdd=${onAdd} />
+      <${DeleteDialog} target=${deleting} onClose=${() => setDeleting(null)}
+                       onConfirm=${onConfirmDelete} />
       <${Banner} note=${note} />`;
   }
 

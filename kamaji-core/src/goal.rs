@@ -6,7 +6,7 @@ use crate::chat::ChatRef;
 use crate::checklist::{self, cache::ChecklistCache, Config};
 use crate::error::ChecklistError;
 
-const CFG: Config = Config {
+pub const CFG: Config = Config {
     command_name: "goal",
     folder: "goals",
     plural_noun: "goals",
@@ -181,6 +181,33 @@ pub fn link_to_fact(
         Some(path) => Ok(LinkOutcome::Linked(path)),
         None => Ok(LinkOutcome::AlreadyLinked),
     }
+}
+
+/// Rewrites the tags/text of an already-existing goal, preserving its
+/// status, its `demonstrated_by` links and its creation timestamp -- see
+/// `checklist::edit_entry`'s doc comment for why this has no
+/// `GoalAction`/`parse_command` counterpart. The link preservation is the
+/// load-bearing part here: a goal's `demonstrated_by` list is written by
+/// `/demonstrate` (see `link_to_fact`), so an edit that dropped it would
+/// silently undo work the user never asked to undo.
+pub fn edit_entry(
+    repo_root: &Path,
+    key: EntryKey,
+    tags: &[String],
+    text: &str,
+) -> Result<PathBuf, ChecklistError> {
+    checklist::edit_entry(&CFG, repo_root, key, tags, text)
+}
+
+/// Permanently removes the goal at `key` -- web-API-only, see
+/// `checklist::delete_entry`'s doc comment for why this deviates from the
+/// achieve-not-delete precedent the rest of this module follows. Nothing
+/// here checks for todos still linking *to* this goal: that's a
+/// cross-domain question this module can't answer without depending on
+/// `todo.rs` (which already depends on this one), so the caller enforces it
+/// -- see `worker::checklist_api_job`'s delete handler.
+pub fn hard_delete_entry(repo_root: &Path, key: EntryKey) -> Result<PathBuf, ChecklistError> {
+    checklist::delete_entry(&CFG, repo_root, key)
 }
 
 #[cfg(test)]
@@ -414,6 +441,65 @@ mod tests {
 
         let goals = list_entries(dir.path(), StatusFilter::Open).unwrap();
         assert_eq!(goals[0].links, vec![fact_a.to_string(), fact_b.to_string()]);
+    }
+
+    #[test]
+    fn edit_entry_preserves_demonstrated_by_links() {
+        // Same guarantee `checklist`'s generic test proves, asserted at the
+        // real goal `CFG`: `demonstrated_by` is the field the web edit path
+        // could most plausibly clobber, since nothing else in `/goal` ever
+        // writes it.
+        let dir = tempfile::tempdir().unwrap();
+        let (key, path) = add_entry(dir.path(), when(), &["health".to_string()], "run").unwrap();
+        let fact = "bitacora/2026/July/20260714-153045-ran-30k";
+        link_to_fact(dir.path(), key, fact).unwrap();
+        achieve_entry(dir.path(), key).unwrap();
+
+        let edited = edit_entry(
+            dir.path(),
+            key,
+            &["fitness".to_string()],
+            "run a marathon this year",
+        )
+        .unwrap();
+        assert_eq!(edited, path);
+
+        let goals = list_entries(dir.path(), StatusFilter::Closed).unwrap();
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].text, "run a marathon this year");
+        assert_eq!(goals[0].tags, vec!["fitness"]);
+        assert_eq!(goals[0].links, vec![fact.to_string()]);
+
+        let contents = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        assert!(contents.contains(&format!("demonstrated_by: [\"[[{fact}]]\"]\n")));
+    }
+
+    #[test]
+    fn hard_delete_entry_removes_the_goal_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, path) = add_entry(dir.path(), when(), &[], "temporary goal").unwrap();
+        assert!(dir.path().join(&path).exists());
+
+        let deleted = hard_delete_entry(dir.path(), key).unwrap();
+        assert_eq!(deleted, path);
+        assert!(!dir.path().join(&path).exists());
+        assert!(list_entries(dir.path(), StatusFilter::Open)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn edit_and_delete_reject_a_missing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let bogus: EntryKey = "2026-07-17-1".parse().unwrap();
+        assert!(matches!(
+            edit_entry(dir.path(), bogus, &[], "new"),
+            Err(ChecklistError::NotFound(_))
+        ));
+        assert!(matches!(
+            hard_delete_entry(dir.path(), bogus),
+            Err(ChecklistError::NotFound(_))
+        ));
     }
 
     #[test]
