@@ -114,6 +114,7 @@ pub async fn run(state: Arc<DaemonState>) {
     }
 }
 
+#[derive(Debug)]
 enum ApiError {
     InvalidTotp,
     Unauthorized,
@@ -264,29 +265,50 @@ struct ListTodosQuery {
     status: Option<String>,
 }
 
+/// Which `StatusFilter` reads a `?status=` value maps to. Pure and separate
+/// from the handler so it can be unit-tested without a `DaemonState`, the
+/// same split `bearer_token` already uses.
+fn status_filters(param: Option<&str>) -> Result<&'static [StatusFilter], ApiError> {
+    match param {
+        None | Some("open") => Ok(&[StatusFilter::Open]),
+        Some("closed") => Ok(&[StatusFilter::Closed]),
+        Some("all") => Ok(&[StatusFilter::Open, StatusFilter::Closed]),
+        Some(other) => Err(ApiError::BadRequest(format!(
+            "status must be 'open', 'closed' or 'all', got '{other}'"
+        ))),
+    }
+}
+
 async fn list_todos_handler(
     State(state): State<RestState>,
     headers: HeaderMap,
     Query(params): Query<ListTodosQuery>,
 ) -> Result<Json<Vec<Entry>>, ApiError> {
     require_session(&state, &headers).await?;
-    let filter = match params.status.as_deref() {
-        None | Some("open") => StatusFilter::Open,
-        Some("closed") => StatusFilter::Closed,
-        Some(other) => {
-            return Err(ApiError::BadRequest(format!(
-                "status must be 'open' or 'closed', got '{other}'"
-            )))
-        }
-    };
+    // `all` is a REST-only concept, deliberately *not* a new
+    // `StatusFilter` variant: `StatusFilter` is the parsed shape of a chat
+    // `/todo list [open|close]` argument (see its doc comment), and there's
+    // no "both" to type there. The web UI needs both halves in one response
+    // to render the completion score (done / total for the selected day or
+    // month), so it's composed here from the two existing reads instead of
+    // pushing an unreachable variant down into `checklist.rs`.
+    let repo = &state.daemon.core.config.notes_repo_path;
+    let filters = status_filters(params.status.as_deref())?;
+
     // A direct filesystem read, not routed through the queue -- same
     // "reads don't need write-serialization" precedent `/status`/`/history`
     // already set for `CommandMode::Sync` commands (see commands.rs).
-    let entries =
-        todo::list_entries(&state.daemon.core.config.notes_repo_path, filter).map_err(|err| {
+    let mut entries = Vec::new();
+    for filter in filters {
+        entries.extend(todo::list_entries(repo, *filter).map_err(|err| {
             tracing::error!(%err, "failed to list todos for web api");
             ApiError::Internal
-        })?;
+        })?);
+    }
+    // Concatenating two already-sorted halves leaves them interleaved
+    // wrongly, so re-sort into the single chronological order every caller
+    // of this endpoint already expects from `list_entries`.
+    entries.sort_by_key(|e| e.key);
     Ok(Json(entries))
 }
 
@@ -441,6 +463,29 @@ mod tests {
     // stick to the pure logic instead). Same approach here: unit-test
     // `bearer_token`/`ApiError` directly; the full request/response cycle
     // is covered by the manual curl smoke test in `docs/remote-api.md`.
+
+    #[test]
+    fn status_filters_maps_each_accepted_value() {
+        assert_eq!(status_filters(None).unwrap(), &[StatusFilter::Open]);
+        assert_eq!(status_filters(Some("open")).unwrap(), &[StatusFilter::Open]);
+        assert_eq!(
+            status_filters(Some("closed")).unwrap(),
+            &[StatusFilter::Closed]
+        );
+        // `all` is what the web UI reads to compute its completion score --
+        // both halves in one response, open first so the concatenation before
+        // the re-sort is deterministic.
+        assert_eq!(
+            status_filters(Some("all")).unwrap(),
+            &[StatusFilter::Open, StatusFilter::Closed]
+        );
+    }
+
+    #[test]
+    fn status_filters_rejects_an_unknown_value() {
+        let err = status_filters(Some("bogus")).unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
 
     #[test]
     fn bearer_token_extracts_from_authorization_header() {

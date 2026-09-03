@@ -2,266 +2,570 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f9e93">
 <title>kamaji todos</title>
 <style>
+  /* Palette follows the "one neutral base, one accent, one text colour"
+     rule for minimal UIs -- teal is the single accent and carries every
+     interactive affordance; nothing else is coloured except the danger
+     path. Three type sizes, two weights, no third font. */
   :root {
     color-scheme: light dark;
-    --bg: #f5f5f4;
+    --bg: #eef5f4;
     --surface: #ffffff;
-    --text: #1c1c1c;
-    --muted: #6b6b6b;
-    --border: #e0e0de;
-    --accent: #2f6f4f;
-    --accent-text: #ffffff;
-    --danger: #b3261e;
-    --danger-text: #ffffff;
-    --chip-bg: #eef2ee;
-    --chip-text: #2f6f4f;
+    --surface-sunken: #f4f8f8;
+    --text: #14302e;
+    --muted: #6c8785;
+    --faint: #a8bcba;
+    --border: #dde9e7;
+    --accent: #2f9e93;
+    --accent-deep: #1f7a72;
+    --accent-soft: #d9efec;
+    --on-accent: #ffffff;
+    --danger: #c2473c;
+    --danger-soft: #fbe6e4;
+    --hero-from: #35b0a3;
+    --hero-to: #1f7a72;
+    --shadow: 0 1px 2px rgba(20, 48, 46, 0.05), 0 8px 24px -12px rgba(20, 48, 46, 0.18);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16171a;
-      --surface: #212226;
-      --text: #eceae5;
-      --muted: #9a9a9a;
-      --border: #35363b;
-      --accent: #59a97e;
-      --accent-text: #0c1210;
-      --danger: #e5877e;
-      --danger-text: #2a0d0a;
-      --chip-bg: #22301f;
-      --chip-text: #8fce9c;
+      --bg: #0d1a19;
+      --surface: #152624;
+      --surface-sunken: #11201f;
+      --text: #e4efed;
+      --muted: #8ba7a4;
+      --faint: #4d6b68;
+      --border: #223936;
+      --accent: #4cc4b6;
+      --accent-deep: #7fdccf;
+      --accent-soft: #1b3a37;
+      --on-accent: #06201d;
+      --danger: #e88a80;
+      --danger-soft: #38201d;
+      --hero-from: #1d6b64;
+      --hero-to: #10403c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
     }
   }
+
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
     -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
   }
-  #app {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 1rem 1rem 6rem;
+  button { font: inherit; cursor: pointer; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  input, textarea { font: inherit; color: var(--text); }
+
+  /* ---------- login ---------- */
+  #login-screen {
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: linear-gradient(160deg, var(--hero-from), var(--hero-to));
   }
-  header {
+  #login-screen form {
+    background: var(--surface);
+    border-radius: 1.5rem;
+    padding: 2rem 1.75rem;
+    width: 100%;
+    max-width: 340px;
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.4);
+    text-align: center;
+  }
+  #login-screen .mark {
+    width: 3rem; height: 3rem; margin: 0 auto 1rem;
+    border-radius: 1rem;
+    background: var(--accent-soft);
+    display: grid; place-items: center;
+    color: var(--accent-deep);
+  }
+  #login-screen h1 { font-size: 1.25rem; margin: 0 0 0.25rem; letter-spacing: -0.01em; }
+  #login-screen p.sub { margin: 0 0 1.5rem; color: var(--muted); font-size: 0.875rem; }
+  #totp {
+    width: 100%;
+    text-align: center;
+    font-size: 1.75rem;
+    font-weight: 600;
+    letter-spacing: 0.4em;
+    text-indent: 0.4em;
+    padding: 0.75rem 0.5rem;
+    border-radius: 0.875rem;
+    border: 1.5px solid var(--border);
+    background: var(--surface-sunken);
+  }
+  #totp:focus { outline: none; border-color: var(--accent); }
+  #login-error { color: var(--danger); font-size: 0.8125rem; min-height: 1.2rem; margin-top: 0.75rem; }
+
+  /* ---------- shell ---------- */
+  #app { max-width: 640px; margin: 0 auto; padding-bottom: 7rem; }
+
+  /* ---------- hero: greeting + completion score ---------- */
+  .hero {
+    background: linear-gradient(150deg, var(--hero-from), var(--hero-to));
+    color: #ffffff;
+    padding: calc(1.5rem + env(safe-area-inset-top)) 1.25rem 2.75rem;
+    border-radius: 0 0 1.75rem 1.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .hero .eyebrow {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    opacity: 0.75;
+    margin: 0 0 0.3rem;
+  }
+  .hero h1 { font-size: 1.5rem; margin: 0; font-weight: 600; letter-spacing: -0.02em; }
+  .hero .today { margin: 0.3rem 0 0; font-size: 0.875rem; opacity: 0.82; }
+
+  #logout-btn {
+    border: none;
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Completeness meter: the ring leaves the count in the middle, which is
+     the part people actually read (radial progress is only worth the space
+     if the number lives at its centre). */
+  .score { position: relative; width: 92px; height: 92px; flex: 0 0 auto; }
+  .score svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .score circle { fill: none; stroke-width: 7; stroke-linecap: round; }
+  .score .track { stroke: rgba(255, 255, 255, 0.22); }
+  .score .fill {
+    stroke: #ffffff;
+    transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .score .readout {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .score .count { font-size: 1.1rem; font-weight: 600; }
+  .score .label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8; margin-top: 0.25rem; }
+
+  /* ---------- filters ---------- */
+  .filter-card {
+    background: var(--surface);
+    margin: -1.75rem 1rem 0;
+    border-radius: 1.125rem;
+    box-shadow: var(--shadow);
+    padding: 0.5rem;
+    position: relative;
+    z-index: 2;
+  }
+  .scopes { display: flex; gap: 0.25rem; }
+  .scopes button {
+    flex: 1;
+    border: none;
+    background: none;
+    color: var(--muted);
+    border-radius: 0.75rem;
+    padding: 0.55rem 0.25rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+  }
+  .scopes button.active {
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+
+  .period {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    padding: 0.75rem 0 1rem;
-    position: sticky;
-    top: 0;
-    background: var(--bg);
-    z-index: 5;
+    margin-top: 0.25rem;
+    padding: 0.4rem 0.25rem 0.15rem;
+    border-top: 1px solid var(--border);
   }
-  header h1 {
-    font-size: 1.15rem;
-    margin: 0;
+  .period[hidden] { display: none; }
+  .period .step {
+    border: none;
+    background: var(--surface-sunken);
+    color: var(--muted);
+    width: 2rem; height: 2rem;
+    border-radius: 0.625rem;
+    display: grid; place-items: center;
+    flex: 0 0 auto;
   }
-  button {
-    font: inherit;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    border-radius: 0.5rem;
-    padding: 0.5rem 0.8rem;
-    min-height: 2.5rem;
-  }
-  button.primary {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
+  .period .step:hover { color: var(--accent-deep); }
+  .period .centre {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    font-size: 0.875rem;
     font-weight: 600;
+    color: var(--text);
   }
-  button.danger {
-    background: var(--danger);
-    color: var(--danger-text);
-    border-color: var(--danger);
-  }
-  button.link {
+  /* Native date/month pickers: the browser's own calendar is better than
+     anything hand-rolled here, so only the chrome is restyled. */
+  .period input {
+    width: 100%;
     border: none;
     background: none;
-    padding: 0.25rem 0.4rem;
-    min-height: unset;
+    text-align: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+    padding: 0.35rem 0;
+  }
+  .period input:focus { outline: none; }
+  .period input::-webkit-calendar-picker-indicator { opacity: 0.45; cursor: pointer; }
+
+  /* ---------- list ---------- */
+  main { padding: 1.25rem 1rem 0; }
+  .day-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 1.5rem 0 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     color: var(--muted);
   }
-  button:disabled { opacity: 0.5; cursor: default; }
-  input[type=text], input[type=password], textarea {
-    font: inherit;
-    width: 100%;
-    padding: 0.6rem 0.7rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-  }
-  textarea { resize: vertical; min-height: 3.2rem; }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 0.75rem;
-    padding: 0.9rem 1rem;
-    margin-bottom: 0.75rem;
-  }
-  .row { display: flex; gap: 0.5rem; }
-  .row.wrap { flex-wrap: wrap; }
-  .grow { flex: 1 1 auto; min-width: 0; }
-  .muted { color: var(--muted); font-size: 0.85rem; }
-  .tabs {
+  .day-heading:first-child { margin-top: 0; }
+  .day-heading .n { color: var(--faint); font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+  .task {
     display: flex;
-    gap: 0.4rem;
-    margin-bottom: 0.75rem;
+    gap: 0.75rem;
+    background: var(--surface);
+    border-radius: 1rem;
+    padding: 0.85rem 0.9rem;
+    margin-bottom: 0.5rem;
+    box-shadow: var(--shadow);
   }
-  .tabs button {
-    flex: 1;
-    border-radius: 999px;
+  .task.done { background: var(--surface-sunken); box-shadow: none; }
+
+  /* One tap-target does the whole open/closed flip -- the old UI spent a
+     full-width button on it, which is the kind of visible choice a minimal
+     list can't afford per row. */
+  .check {
+    flex: 0 0 auto;
+    width: 1.375rem; height: 1.375rem;
+    margin-top: 0.1rem;
+    border-radius: 50%;
+    border: 2px solid var(--faint);
+    background: none;
+    padding: 0;
+    display: grid; place-items: center;
+    transition: background 0.15s, border-color 0.15s;
   }
-  .tabs button.active {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
-  }
-  .chip {
-    display: inline-block;
-    background: var(--chip-bg);
-    color: var(--chip-text);
-    border-radius: 999px;
-    padding: 0.1rem 0.6rem;
-    font-size: 0.78rem;
-    margin: 0.15rem 0.3rem 0 0;
-  }
-  .entry-text {
+  .check:hover { border-color: var(--accent); }
+  .check svg { width: 0.75rem; height: 0.75rem; opacity: 0; transition: opacity 0.15s; }
+  .task.done .check { background: var(--accent); border-color: var(--accent); }
+  .task.done .check svg { opacity: 1; color: var(--on-accent); }
+
+  .task-body { flex: 1 1 auto; min-width: 0; }
+  .task-text {
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.4;
+    line-height: 1.45;
+    font-size: 0.9375rem;
   }
-  .entry-text.closed { text-decoration: line-through; color: var(--muted); }
-  .entry-key { font-size: 0.75rem; color: var(--muted); font-family: ui-monospace, monospace; }
-  .links a { color: var(--accent); word-break: break-all; }
-  .actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap; }
-  #composer {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    background: var(--bg);
-    border-top: 1px solid var(--border);
-    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  .task.done .task-text { text-decoration: line-through; color: var(--muted); }
+  .task-text a { color: var(--accent-deep); }
+  .task-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin-top: 0.4rem; }
+  .chip {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 500;
   }
-  #composer .inner { max-width: 720px; margin: 0 auto; }
-  #banner {
-    position: fixed;
-    top: 0.75rem; left: 50%; transform: translateX(-50%);
-    background: var(--danger); color: var(--danger-text);
-    padding: 0.6rem 1rem; border-radius: 0.5rem;
-    max-width: 90vw; z-index: 20; display: none;
+  .chip.plain { background: var(--surface-sunken); color: var(--muted); font-family: ui-monospace, monospace; }
+  .task-links { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; word-break: break-all; }
+
+  .more {
+    flex: 0 0 auto;
+    border: none;
+    background: none;
+    color: var(--faint);
+    padding: 0 0.15rem;
+    align-self: flex-start;
+    line-height: 1;
+    font-size: 1.1rem;
   }
-  dialog {
+  .more:hover { color: var(--muted); }
+  .task-actions { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+  .task-actions button {
     border: 1px solid var(--border);
-    border-radius: 0.75rem;
-    padding: 1.25rem;
     background: var(--surface);
-    color: var(--text);
-    max-width: 420px;
-    width: 90vw;
+    color: var(--muted);
+    border-radius: 0.625rem;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8125rem;
   }
-  dialog::backdrop { background: rgba(0,0,0,0.5); }
-  #login-screen {
-    min-height: 100vh;
+  .task-actions button.danger { color: var(--danger); border-color: var(--danger-soft); }
+
+  .edit-box {
+    width: 100%;
+    border: 1.5px solid var(--accent);
+    border-radius: 0.75rem;
+    background: var(--surface);
+    padding: 0.5rem 0.6rem;
+    resize: vertical;
+    min-height: 3.5rem;
+    line-height: 1.45;
+  }
+  .edit-box:focus { outline: none; }
+
+  /* Completed work collapses out of the way -- present for the score and
+     for reopening, but never competing with what's still open. */
+  #done-section { margin-top: 1.5rem; }
+  #done-toggle {
+    width: 100%;
+    border: none;
+    background: none;
+    color: var(--muted);
+    text-align: left;
+    padding: 0.5rem 0.15rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 1rem;
+    gap: 0.4rem;
   }
-  #login-screen form {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 0.75rem;
-    padding: 1.5rem;
+  #done-toggle .caret { transition: transform 0.2s; }
+  #done-toggle.open .caret { transform: rotate(90deg); }
+
+  .empty {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    color: var(--muted);
+  }
+  .empty .glyph {
+    width: 3.5rem; height: 3.5rem;
+    margin: 0 auto 0.9rem;
+    border-radius: 1.25rem;
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    display: grid; place-items: center;
+  }
+  .empty p { margin: 0; font-size: 0.9375rem; }
+  .empty .hint { margin-top: 0.3rem; font-size: 0.8125rem; color: var(--faint); }
+
+  footer.tally {
+    text-align: center;
+    color: var(--faint);
+    font-size: 0.8125rem;
+    padding: 1.75rem 1rem 0;
+  }
+
+  /* ---------- add ---------- */
+  #fab {
+    position: fixed;
+    right: max(1.25rem, calc(50% - 320px + 1.25rem));
+    bottom: calc(1.5rem + env(safe-area-inset-bottom));
+    width: 3.5rem; height: 3.5rem;
+    border-radius: 50%;
+    border: none;
+    background: var(--accent);
+    color: var(--on-accent);
+    box-shadow: 0 10px 24px -6px rgba(31, 122, 114, 0.55);
+    display: grid; place-items: center;
+    z-index: 10;
+  }
+  #fab:active { transform: scale(0.94); }
+
+  dialog {
+    border: none;
+    padding: 0;
+    background: transparent;
+    color: var(--text);
+    max-width: 480px;
     width: 100%;
-    max-width: 320px;
   }
-  #login-screen h1 { font-size: 1.1rem; margin: 0 0 1rem; }
-  #login-screen .field { margin-bottom: 0.9rem; }
-  #login-error { color: var(--danger); font-size: 0.85rem; min-height: 1.1rem; }
-  .empty-state { color: var(--muted); text-align: center; padding: 2rem 1rem; }
+  dialog::backdrop { background: rgba(10, 30, 28, 0.5); backdrop-filter: blur(2px); }
+  .sheet {
+    background: var(--surface);
+    border-radius: 1.25rem;
+    padding: 1.25rem;
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.45);
+  }
+  .sheet h2 { margin: 0 0 0.9rem; font-size: 1rem; font-weight: 600; }
+  .sheet p { margin: 0 0 0.6rem; font-size: 0.875rem; color: var(--muted); line-height: 1.5; }
+  .sheet .strong { color: var(--text); font-weight: 600; }
+  #new-text {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 0.875rem;
+    background: var(--surface-sunken);
+    padding: 0.75rem 0.85rem;
+    resize: vertical;
+    min-height: 5rem;
+    line-height: 1.45;
+  }
+  #new-text:focus { outline: none; border-color: var(--accent); }
+  .sheet-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 0.75rem;
+    padding: 0.6rem 1.1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .btn.danger { background: var(--danger); border-color: var(--danger); color: #ffffff; font-weight: 600; }
+
+  #banner {
+    position: fixed;
+    visibility: hidden;
+    left: 50%; top: calc(0.9rem + env(safe-area-inset-top));
+    transform: translateX(-50%) translateY(-140%);
+    background: var(--danger); color: #ffffff;
+    padding: 0.65rem 1.1rem;
+    border-radius: 0.875rem;
+    font-size: 0.875rem;
+    max-width: min(92vw, 420px);
+    z-index: 30;
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.5);
+    transition: transform 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  #banner.show { visibility: visible; transform: translateX(-50%) translateY(0); }
+  #banner.ok { background: var(--accent-deep); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
 </style>
 </head>
 <body>
 
-<div id="login-screen" hidden>
-  <form id="login-form">
-    <h1>kamaji todos</h1>
-    <div class="field">
-      <label for="totp">6-digit code</label>
-      <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" required autofocus>
-    </div>
-    <button type="submit" class="primary" style="width:100%">Log in</button>
-    <div id="login-error"></div>
-  </form>
-</div>
+<div id="root"></div>
 
-<div id="app" hidden>
-  <header>
-    <h1>Todos</h1>
-    <button class="link" id="logout-btn">Log out</button>
-  </header>
+<!--
+  Vendored, not CDN-loaded: /app is served by kamajid itself and must keep
+  working with no egress from the browser to anything but this origin, the
+  same property the previous zero-dependency version had. Inlining it also
+  keeps `include_str!` in rest.rs a single self-contained file -- no assets
+  directory to deploy, which is the reason that decision was made.
 
-  <div class="tabs">
-    <button id="tab-open" class="active">Open</button>
-    <button id="tab-closed">Closed</button>
-  </div>
-
-  <div id="list"></div>
-
-  <div id="composer">
-    <div class="inner">
-      <div class="row wrap" id="tag-preview"></div>
-      <textarea id="new-text" placeholder="What needs doing? #tags and links work right in the text."></textarea>
-      <div class="row" style="margin-top:0.5rem">
-        <button class="primary grow" id="add-btn">Add todo</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div id="banner"></div>
-
-<dialog id="delete-dialog">
-  <p><strong>Permanently delete this todo?</strong></p>
-  <p class="muted" id="delete-target"></p>
-  <p class="muted">This removes the file and commits the removal. Unlike resolving, there's no reopen for this one.</p>
-  <div class="row" style="justify-content:flex-end; margin-top:1rem">
-    <button id="delete-cancel">Cancel</button>
-    <button class="danger" id="delete-confirm">Delete permanently</button>
-  </div>
-</dialog>
-
+  htm/preact standalone UMD v3.1.1 (exposes the `htmPreact` global).
+  Preact (c) Jason Miller -- MIT. htm (c) Google LLC -- Apache-2.0.
+  Refresh with:
+    curl -sSL https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js
+    sha256 62c4ffea400078c0eda7f435b22726b4961ebdf74c8506f188e92bec41d8ac51
+-->
+<script>
+!function(e,n){"object"==typeof exports&&"undefined"!=typeof module?n(exports):"function"==typeof define&&define.amd?define(["exports"],n):n(e.htmPreact={})}(this,function(e){var n,_,t,o,r,u,l,i={},c=[],f=/acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i;function s(e,n){for(var _ in n)e[_]=n[_];return e}function a(e){var n=e.parentNode;n&&n.removeChild(e)}function p(e,_,t){var o,r,u,l={};for(u in _)"key"==u?o=_[u]:"ref"==u?r=_[u]:l[u]=_[u];if(arguments.length>2&&(l.children=arguments.length>3?n.call(arguments,2):t),"function"==typeof e&&null!=e.defaultProps)for(u in e.defaultProps)void 0===l[u]&&(l[u]=e.defaultProps[u]);return h(e,l,o,r,null)}function h(e,n,o,r,u){var l={type:e,props:n,key:o,ref:r,__k:null,__:null,__b:0,__e:null,__d:void 0,__c:null,__h:null,constructor:void 0,__v:null==u?++t:u};return null!=_.vnode&&_.vnode(l),l}function d(e){return e.children}function v(e,n){this.props=e,this.context=n}function y(e,n){if(null==n)return e.__?y(e.__,e.__.__k.indexOf(e)+1):null;for(var _;n<e.__k.length;n++)if(null!=(_=e.__k[n])&&null!=_.__e)return _.__e;return"function"==typeof e.type?y(e):null}function m(e){var n,_;if(null!=(e=e.__)&&null!=e.__c){for(e.__e=e.__c.base=null,n=0;n<e.__k.length;n++)if(null!=(_=e.__k[n])&&null!=_.__e){e.__e=e.__c.base=_.__e;break}return m(e)}}function g(e){(!e.__d&&(e.__d=!0)&&o.push(e)&&!k.__r++||u!==_.debounceRendering)&&((u=_.debounceRendering)||r)(k)}function k(){for(var e;k.__r=o.length;)e=o.sort(function(e,n){return e.__v.__b-n.__v.__b}),o=[],e.some(function(e){var n,_,t,o,r,u;e.__d&&(r=(o=(n=e).__v).__e,(u=n.__P)&&(_=[],(t=s({},o)).__v=o.__v+1,D(u,o,t,n.__n,void 0!==u.ownerSVGElement,null!=o.__h?[r]:null,_,null==r?y(o):r,o.__h),w(_,o),o.__e!=r&&m(o)))})}function b(e,n,_,t,o,r,u,l,f,s){var a,p,v,m,g,k,b,H=t&&t.__k||c,E=H.length;for(_.__k=[],a=0;a<n.length;a++)if(null!=(m=_.__k[a]=null==(m=n[a])||"boolean"==typeof m?null:"string"==typeof m||"number"==typeof m||"bigint"==typeof m?h(null,m,null,null,m):Array.isArray(m)?h(d,{children:m},null,null,null):m.__b>0?h(m.type,m.props,m.key,null,m.__v):m)){if(m.__=_,m.__b=_.__b+1,null===(v=H[a])||v&&m.key==v.key&&m.type===v.type)H[a]=void 0;else for(p=0;p<E;p++){if((v=H[p])&&m.key==v.key&&m.type===v.type){H[p]=void 0;break}v=null}D(e,m,v=v||i,o,r,u,l,f,s),g=m.__e,(p=m.ref)&&v.ref!=p&&(b||(b=[]),v.ref&&b.push(v.ref,null,m),b.push(p,m.__c||g,m)),null!=g?(null==k&&(k=g),"function"==typeof m.type&&null!=m.__k&&m.__k===v.__k?m.__d=f=C(m,f,e):f=x(e,m,v,H,g,f),s||"option"!==_.type?"function"==typeof _.type&&(_.__d=f):e.value=""):f&&v.__e==f&&f.parentNode!=e&&(f=y(v))}for(_.__e=k,a=E;a--;)null!=H[a]&&("function"==typeof _.type&&null!=H[a].__e&&H[a].__e==_.__d&&(_.__d=y(t,a+1)),A(H[a],H[a]));if(b)for(a=0;a<b.length;a++)U(b[a],b[++a],b[++a])}function C(e,n,_){var t,o;for(t=0;t<e.__k.length;t++)(o=e.__k[t])&&(o.__=e,n="function"==typeof o.type?C(o,n,_):x(_,o,o,e.__k,o.__e,n));return n}function x(e,n,_,t,o,r){var u,l,i;if(void 0!==n.__d)u=n.__d,n.__d=void 0;else if(null==_||o!=r||null==o.parentNode)e:if(null==r||r.parentNode!==e)e.appendChild(o),u=null;else{for(l=r,i=0;(l=l.nextSibling)&&i<t.length;i+=2)if(l==o)break e;e.insertBefore(o,r),u=r}return void 0!==u?u:o.nextSibling}function H(e,n,_){"-"===n[0]?e.setProperty(n,_):e[n]=null==_?"":"number"!=typeof _||f.test(n)?_:_+"px"}function E(e,n,_,t,o){var r;e:if("style"===n)if("string"==typeof _)e.style.cssText=_;else{if("string"==typeof t&&(e.style.cssText=t=""),t)for(n in t)_&&n in _||H(e.style,n,"");if(_)for(n in _)t&&_[n]===t[n]||H(e.style,n,_[n])}else if("o"===n[0]&&"n"===n[1])r=n!==(n=n.replace(/Capture$/,"")),n=n.toLowerCase()in e?n.toLowerCase().slice(2):n.slice(2),e.l||(e.l={}),e.l[n+r]=_,_?t||e.addEventListener(n,r?S:P,r):e.removeEventListener(n,r?S:P,r);else if("dangerouslySetInnerHTML"!==n){if(o)n=n.replace(/xlink[H:h]/,"h").replace(/sName$/,"s");else if("href"!==n&&"list"!==n&&"form"!==n&&"tabIndex"!==n&&"download"!==n&&n in e)try{e[n]=null==_?"":_;break e}catch(e){}"function"==typeof _||(null!=_&&(!1!==_||"a"===n[0]&&"r"===n[1])?e.setAttribute(n,_):e.removeAttribute(n))}}function P(e){this.l[e.type+!1](_.event?_.event(e):e)}function S(e){this.l[e.type+!0](_.event?_.event(e):e)}function D(e,n,t,o,r,u,l,i,c){var f,a,p,h,y,m,g,k,C,x,H,E=n.type;if(void 0!==n.constructor)return null;null!=t.__h&&(c=t.__h,i=n.__e=t.__e,n.__h=null,u=[i]),(f=_.__b)&&f(n);try{e:if("function"==typeof E){if(k=n.props,C=(f=E.contextType)&&o[f.__c],x=f?C?C.props.value:f.__:o,t.__c?g=(a=n.__c=t.__c).__=a.__E:("prototype"in E&&E.prototype.render?n.__c=a=new E(k,x):(n.__c=a=new v(k,x),a.constructor=E,a.render=M),C&&C.sub(a),a.props=k,a.state||(a.state={}),a.context=x,a.__n=o,p=a.__d=!0,a.__h=[]),null==a.__s&&(a.__s=a.state),null!=E.getDerivedStateFromProps&&(a.__s==a.state&&(a.__s=s({},a.__s)),s(a.__s,E.getDerivedStateFromProps(k,a.__s))),h=a.props,y=a.state,p)null==E.getDerivedStateFromProps&&null!=a.componentWillMount&&a.componentWillMount(),null!=a.componentDidMount&&a.__h.push(a.componentDidMount);else{if(null==E.getDerivedStateFromProps&&k!==h&&null!=a.componentWillReceiveProps&&a.componentWillReceiveProps(k,x),!a.__e&&null!=a.shouldComponentUpdate&&!1===a.shouldComponentUpdate(k,a.__s,x)||n.__v===t.__v){a.props=k,a.state=a.__s,n.__v!==t.__v&&(a.__d=!1),a.__v=n,n.__e=t.__e,n.__k=t.__k,n.__k.forEach(function(e){e&&(e.__=n)}),a.__h.length&&l.push(a);break e}null!=a.componentWillUpdate&&a.componentWillUpdate(k,a.__s,x),null!=a.componentDidUpdate&&a.__h.push(function(){a.componentDidUpdate(h,y,m)})}a.context=x,a.props=k,a.state=a.__s,(f=_.__r)&&f(n),a.__d=!1,a.__v=n,a.__P=e,f=a.render(a.props,a.state,a.context),a.state=a.__s,null!=a.getChildContext&&(o=s(s({},o),a.getChildContext())),p||null==a.getSnapshotBeforeUpdate||(m=a.getSnapshotBeforeUpdate(h,y)),H=null!=f&&f.type===d&&null==f.key?f.props.children:f,b(e,Array.isArray(H)?H:[H],n,t,o,r,u,l,i,c),a.base=n.__e,n.__h=null,a.__h.length&&l.push(a),g&&(a.__E=a.__=null),a.__e=!1}else null==u&&n.__v===t.__v?(n.__k=t.__k,n.__e=t.__e):n.__e=T(t.__e,n,t,o,r,u,l,c);(f=_.diffed)&&f(n)}catch(e){n.__v=null,(c||null!=u)&&(n.__e=i,n.__h=!!c,u[u.indexOf(i)]=null),_.__e(e,n,t)}}function w(e,n){_.__c&&_.__c(n,e),e.some(function(n){try{e=n.__h,n.__h=[],e.some(function(e){e.call(n)})}catch(e){_.__e(e,n.__v)}})}function T(e,_,t,o,r,u,l,c){var f,s,p,h=t.props,d=_.props,v=_.type,m=0;if("svg"===v&&(r=!0),null!=u)for(;m<u.length;m++)if((f=u[m])&&(f===e||(v?f.localName==v:3==f.nodeType))){e=f,u[m]=null;break}if(null==e){if(null===v)return document.createTextNode(d);e=r?document.createElementNS("http://www.w3.org/2000/svg",v):document.createElement(v,d.is&&d),u=null,c=!1}if(null===v)h===d||c&&e.data===d||(e.data=d);else{if(u=u&&n.call(e.childNodes),s=(h=t.props||i).dangerouslySetInnerHTML,p=d.dangerouslySetInnerHTML,!c){if(null!=u)for(h={},m=0;m<e.attributes.length;m++)h[e.attributes[m].name]=e.attributes[m].value;(p||s)&&(p&&(s&&p.__html==s.__html||p.__html===e.innerHTML)||(e.innerHTML=p&&p.__html||""))}if(function(e,n,_,t,o){var r;for(r in _)"children"===r||"key"===r||r in n||E(e,r,null,_[r],t);for(r in n)o&&"function"!=typeof n[r]||"children"===r||"key"===r||"value"===r||"checked"===r||_[r]===n[r]||E(e,r,n[r],_[r],t)}(e,d,h,r,c),p)_.__k=[];else if(m=_.props.children,b(e,Array.isArray(m)?m:[m],_,t,o,r&&"foreignObject"!==v,u,l,u?u[0]:t.__k&&y(t,0),c),null!=u)for(m=u.length;m--;)null!=u[m]&&a(u[m]);c||("value"in d&&void 0!==(m=d.value)&&(m!==e.value||"progress"===v&&!m)&&E(e,"value",m,h.value,!1),"checked"in d&&void 0!==(m=d.checked)&&m!==e.checked&&E(e,"checked",m,h.checked,!1))}return e}function U(e,n,t){try{"function"==typeof e?e(n):e.current=n}catch(e){_.__e(e,t)}}function A(e,n,t){var o,r;if(_.unmount&&_.unmount(e),(o=e.ref)&&(o.current&&o.current!==e.__e||U(o,null,n)),null!=(o=e.__c)){if(o.componentWillUnmount)try{o.componentWillUnmount()}catch(e){_.__e(e,n)}o.base=o.__P=null}if(o=e.__k)for(r=0;r<o.length;r++)o[r]&&A(o[r],n,"function"!=typeof e.type);t||null==e.__e||a(e.__e),e.__e=e.__d=void 0}function M(e,n,_){return this.constructor(e,_)}n=c.slice,_={__e:function(e,n){for(var _,t,o;n=n.__;)if((_=n.__c)&&!_.__)try{if((t=_.constructor)&&null!=t.getDerivedStateFromError&&(_.setState(t.getDerivedStateFromError(e)),o=_.__d),null!=_.componentDidCatch&&(_.componentDidCatch(e),o=_.__d),o)return _.__E=_}catch(n){e=n}throw e}},t=0,v.prototype.setState=function(e,n){var _;_=null!=this.__s&&this.__s!==this.state?this.__s:this.__s=s({},this.state),"function"==typeof e&&(e=e(s({},_),this.props)),e&&s(_,e),null!=e&&this.__v&&(n&&this.__h.push(n),g(this))},v.prototype.forceUpdate=function(e){this.__v&&(this.__e=!0,e&&this.__h.push(e),g(this))},v.prototype.render=d,o=[],r="function"==typeof Promise?Promise.prototype.then.bind(Promise.resolve()):setTimeout,k.__r=0,l=0;var F,L,N,W=0,R=[],I=_.__b,O=_.__r,V=_.diffed,q=_.__c,B=_.unmount;function $(e,n){_.__h&&_.__h(L,e,W||n),W=0;var t=L.__H||(L.__H={__:[],__h:[]});return e>=t.__.length&&t.__.push({}),t.__[e]}function j(e){return W=1,G(ee,e)}function G(e,n,_){var t=$(F++,2);return t.t=e,t.__c||(t.__=[_?_(n):ee(void 0,n),function(e){var n=t.t(t.__[0],e);t.__[0]!==n&&(t.__=[n,t.__[1]],t.__c.setState({}))}],t.__c=L),t.__}function z(e,n){var t=$(F++,4);!_.__s&&Z(t.__H,n)&&(t.__=e,t.__H=n,L.__h.push(t))}function J(e,n){var _=$(F++,7);return Z(_.__H,n)&&(_.__=e(),_.__H=n,_.__h=e),_.__}function K(){R.forEach(function(e){if(e.__P)try{e.__H.__h.forEach(X),e.__H.__h.forEach(Y),e.__H.__h=[]}catch(n){e.__H.__h=[],_.__e(n,e.__v)}}),R=[]}_.__b=function(e){L=null,I&&I(e)},_.__r=function(e){O&&O(e),F=0;var n=(L=e.__c).__H;n&&(n.__h.forEach(X),n.__h.forEach(Y),n.__h=[])},_.diffed=function(e){V&&V(e);var n=e.__c;n&&n.__H&&n.__H.__h.length&&(1!==R.push(n)&&N===_.requestAnimationFrame||((N=_.requestAnimationFrame)||function(e){var n,_=function(){clearTimeout(t),Q&&cancelAnimationFrame(n),setTimeout(e)},t=setTimeout(_,100);Q&&(n=requestAnimationFrame(_))})(K)),L=void 0},_.__c=function(e,n){n.some(function(e){try{e.__h.forEach(X),e.__h=e.__h.filter(function(e){return!e.__||Y(e)})}catch(t){n.some(function(e){e.__h&&(e.__h=[])}),n=[],_.__e(t,e.__v)}}),q&&q(e,n)},_.unmount=function(e){B&&B(e);var n=e.__c;if(n&&n.__H)try{n.__H.__.forEach(X)}catch(e){_.__e(e,n.__v)}};var Q="function"==typeof requestAnimationFrame;function X(e){var n=L;"function"==typeof e.__c&&e.__c(),L=n}function Y(e){var n=L;e.__c=e.__(),L=n}function Z(e,n){return!e||e.length!==n.length||n.some(function(n,_){return n!==e[_]})}function ee(e,n){return"function"==typeof n?n(e):n}var ne=function(e,n,_,t){var o;n[0]=0;for(var r=1;r<n.length;r++){var u=n[r++],l=n[r]?(n[0]|=u?1:2,_[n[r++]]):n[++r];3===u?t[0]=l:4===u?t[1]=Object.assign(t[1]||{},l):5===u?(t[1]=t[1]||{})[n[++r]]=l:6===u?t[1][n[++r]]+=l+"":u?(o=e.apply(l,ne(e,l,_,["",null])),t.push(o),l[0]?n[0]|=2:(n[r-2]=0,n[r]=o)):t.push(l)}return t},_e=new Map,te=function(e){var n=_e.get(this);return n||(n=new Map,_e.set(this,n)),(n=ne(this,n.get(e)||(n.set(e,n=function(e){for(var n,_,t=1,o="",r="",u=[0],l=function(e){1===t&&(e||(o=o.replace(/^\s*\n\s*|\s*\n\s*$/g,"")))?u.push(0,e,o):3===t&&(e||o)?(u.push(3,e,o),t=2):2===t&&"..."===o&&e?u.push(4,e,0):2===t&&o&&!e?u.push(5,0,!0,o):t>=5&&((o||!e&&5===t)&&(u.push(t,0,o,_),t=6),e&&(u.push(t,e,0,_),t=6)),o=""},i=0;i<e.length;i++){i&&(1===t&&l(),l(i));for(var c=0;c<e[i].length;c++)n=e[i][c],1===t?"<"===n?(l(),u=[u],t=3):o+=n:4===t?"--"===o&&">"===n?(t=1,o=""):o=n+o[0]:r?n===r?r="":o+=n:'"'===n||"'"===n?r=n:">"===n?(l(),t=1):t&&("="===n?(t=5,_=o,o=""):"/"===n&&(t<5||">"===e[i][c+1])?(l(),3===t&&(u=u[0]),t=u,(u=u[0]).push(2,0,t),t=0):" "===n||"\t"===n||"\n"===n||"\r"===n?(l(),t=2):o+=n),3===t&&"!--"===o&&(t=4,u=u[0])}return l(),u}(e)),n),arguments,[])).length>1?n:n[0]}.bind(p);e.h=p,e.html=te,e.render=function(e,t,o){var r,u,l;_.__&&_.__(e,t),u=(r="function"==typeof o)?null:o&&o.__k||t.__k,l=[],D(t,e=(!r&&o||t).__k=p(d,null,[e]),u||i,i,void 0!==t.ownerSVGElement,!r&&o?[o]:u?null:t.firstChild?n.call(t.childNodes):null,l,!r&&o?o:u?u.__e:t.firstChild,r),w(l,e)},e.Component=v,e.createContext=function(e,n){var _={__c:n="__cC"+l++,__:e,Consumer:function(e,n){return e.children(n)},Provider:function(e){var _,t;return this.getChildContext||(_=[],(t={})[n]=this,this.getChildContext=function(){return t},this.shouldComponentUpdate=function(e){this.props.value!==e.value&&_.some(g)},this.sub=function(e){_.push(e);var n=e.componentWillUnmount;e.componentWillUnmount=function(){_.splice(_.indexOf(e),1),n&&n.call(e)}}),e.children}};return _.Provider.__=_.Consumer.contextType=_},e.useState=j,e.useReducer=G,e.useEffect=function(e,n){var t=$(F++,3);!_.__s&&Z(t.__H,n)&&(t.__=e,t.__H=n,L.__H.__h.push(t))},e.useLayoutEffect=z,e.useRef=function(e){return W=5,J(function(){return{current:e}},[])},e.useImperativeHandle=function(e,n,_){W=6,z(function(){"function"==typeof e?e(n()):e&&(e.current=n())},null==_?_:_.concat(e))},e.useMemo=J,e.useCallback=function(e,n){return W=8,J(function(){return e},n)},e.useContext=function(e){var n=L.context[e.__c],_=$(F++,9);return _.c=e,n?(null==_.__&&(_.__=!0,n.sub(L)),n.props.value):e.__},e.useDebugValue=function(e,n){_.useDebugValue&&_.useDebugValue(n?n(e):e)},e.useErrorBoundary=function(e){var n=$(F++,10),_=j();return n.__=e,L.componentDidCatch||(L.componentDidCatch=function(e){n.__&&n.__(e),_[1](e)}),[_[0],function(){_[1](void 0)}]}});
+</script>
 <script>
 (function () {
   "use strict";
 
+  const { html, render, useState, useEffect, useRef, useCallback, useMemo } = htmPreact;
+
   const TOKEN_KEY = "kamaji_todo_token";
-  const state = { filter: "open", entries: [], editingKey: null, pendingDeleteKey: null };
+  const SCOPE_KEY = "kamaji_todo_scope";
 
-  function token() { return localStorage.getItem(TOKEN_KEY); }
-  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+  /* ================= dates ================= */
 
-  function showBanner(msg) {
-    const el = document.getElementById("banner");
-    el.textContent = msg;
-    el.style.display = "block";
-    clearTimeout(showBanner._t);
-    showBanner._t = setTimeout(() => { el.style.display = "none"; }, 4000);
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+  function addMonths(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
+  function sameDay(a, b) { return a.getTime() === b.getTime(); }
+
+  // Monday-start week, matching how the notes repo's day headings read to a
+  // European user -- not the JS default of Sunday.
+  function startOfWeek(d) { return addDays(startOfDay(d), -((d.getDay() + 6) % 7)); }
+
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+  function isoDate(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function isoMonth(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1); }
+
+  // An entry's date comes straight out of its key ("YYYY-MM-DD-N") -- the key
+  // *is* the creation date plus position (see checklist::EntryKey), so there's
+  // no separate timestamp to fetch. Built from parts rather than Date.parse so
+  // it lands on local midnight, not UTC midnight, which would shift the day
+  // for anyone west of Greenwich.
+  function entryDate(entry) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})-/.exec(entry.key);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
   }
 
-  // Mirrors kamaji-core's tags::parse_tag_token/extract_tags closely enough
-  // for a live preview: whitespace-delimited, trim a few edge characters,
-  // require at least one letter so a bare #123 isn't treated as a tag.
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const MONTHS = ["January", "February", "March", "April", "May", "June",
+                  "July", "August", "September", "October", "November", "December"];
+
+  function shortDate(d) {
+    return DAYS[d.getDay()].slice(0, 3) + " " + d.getDate() + " " + MONTHS[d.getMonth()].slice(0, 3);
+  }
+
+  function dayHeading(d) {
+    const today = startOfDay(new Date());
+    if (sameDay(d, today)) return "Today";
+    if (sameDay(d, addDays(today, -1))) return "Yesterday";
+    if (sameDay(d, addDays(today, 1))) return "Tomorrow";
+    const label = DAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()];
+    return d.getFullYear() === today.getFullYear() ? label : label + " " + d.getFullYear();
+  }
+
+  function greetingFor(d) {
+    const h = d.getHours();
+    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  }
+
+  /* ================= scope ================= */
+
+  function inScope(entry, scope, anchor) {
+    if (scope === "all") return true;
+    const d = entryDate(entry);
+    if (!d) return false;
+    if (scope === "day") return sameDay(d, anchor);
+    if (scope === "month") {
+      return d.getFullYear() === anchor.getFullYear() && d.getMonth() === anchor.getMonth();
+    }
+    const from = startOfWeek(anchor);
+    return d >= from && d < addDays(from, 7);
+  }
+
+  function groupByDay(entries) {
+    const groups = [];
+    let current = null;
+    for (const entry of entries) {
+      const d = entryDate(entry);
+      const stamp = d ? d.getTime() : 0;
+      if (!current || current.stamp !== stamp) {
+        current = { stamp, date: d, entries: [] };
+        groups.push(current);
+      }
+      current.entries.push(entry);
+    }
+    return groups;
+  }
+
+  /* ================= text ================= */
+
+  // Mirrors kamaji-core's tags::parse_tag_token/extract_tags closely enough for
+  // a live preview: whitespace-delimited, trim a few edge characters, require
+  // at least one letter so a bare #123 isn't treated as a tag.
   function extractTags(text) {
     const out = [];
     for (let token of text.split(/\s+/)) {
@@ -281,288 +585,530 @@
     return escaped.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   }
 
-  async function api(path, options) {
-    options = options || {};
-    const headers = Object.assign({}, options.headers, { Authorization: "Bearer " + token() });
-    if (options.body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await fetch(path, Object.assign({}, options, { headers }));
-    if (res.status === 401) {
-      clearToken();
-      showLogin();
-      throw new Error("session expired, please log in again");
-    }
-    let data = null;
-    try { data = await res.json(); } catch (e) { /* no body */ }
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) || ("request failed (" + res.status + ")");
-      throw new Error(msg);
-    }
-    return data;
+  /* ================= api ================= */
+
+  function token() { return localStorage.getItem(TOKEN_KEY); }
+
+  // localStorage throws outright in some privacy modes rather than just
+  // returning null, so every access is guarded -- a browser that refuses to
+  // persist the scope preference should still render a working app.
+  function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function safeSet(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
+
+  /* ================= components ================= */
+
+  const Icon = ({ d, size, sw }) => html`
+    <svg width=${size || 14} height=${size || 14} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width=${sw || 2.5}
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d=${d} />
+    </svg>`;
+
+  const CHECK_PATH = "M20 6L9 17l-5-5";
+  const CHEVRON_L = "M15 18l-6-6 6-6";
+  const CHEVRON_R = "M9 18l6-6-6-6";
+
+  /* Completeness meter: the ring leaves the count in the middle, which is the
+     part people actually read -- radial progress only earns its space if the
+     number lives at its centre. */
+  function ScoreRing({ done, total }) {
+    const r = 40;
+    const circumference = 2 * Math.PI * r;
+    const ratio = total === 0 ? 0 : done / total;
+    return html`
+      <div class="score">
+        <svg viewBox="0 0 92 92" aria-hidden="true">
+          <circle class="track" cx="46" cy="46" r=${r} />
+          <circle class="fill" cx="46" cy="46" r=${r}
+                  style=${{
+                    strokeDasharray: circumference + " " + circumference,
+                    strokeDashoffset: circumference * (1 - ratio),
+                  }} />
+        </svg>
+        <div class="readout">
+          <span class="count">${done}/${total}</span>
+          <span class="label">${total === 1 ? "Task" : "Tasks"}</span>
+        </div>
+      </div>`;
   }
 
-  function showLogin() {
-    document.getElementById("login-screen").hidden = false;
-    document.getElementById("app").hidden = true;
+  function Hero({ done, total, onLogout }) {
+    const now = new Date();
+    return html`
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Focus to-do</p>
+          <h1>${greetingFor(now)}</h1>
+          <p class="today">${dayHeading(startOfDay(now))}, ${shortDate(now)}</p>
+          <button id="logout-btn" onClick=${onLogout}>Log out</button>
+        </div>
+        <${ScoreRing} done=${done} total=${total} />
+      </div>`;
   }
 
-  function showApp() {
-    document.getElementById("login-screen").hidden = true;
-    document.getElementById("app").hidden = false;
-    loadEntries();
-  }
+  const SCOPES = [
+    { id: "day", label: "Day" },
+    { id: "week", label: "Week" },
+    { id: "month", label: "Month" },
+    { id: "all", label: "All" },
+  ];
 
-  async function loadEntries() {
-    const list = document.getElementById("list");
-    list.innerHTML = '<p class="muted">Loading...</p>';
-    try {
-      state.entries = await api("/api/todos?status=" + state.filter);
-      renderList();
-    } catch (err) {
-      list.innerHTML = "";
-      showBanner(err.message);
-    }
-  }
-
-  function renderList() {
-    const list = document.getElementById("list");
-    list.innerHTML = "";
-    if (state.entries.length === 0) {
-      list.innerHTML = '<div class="empty-state">Nothing ' + state.filter + '.</div>';
-      return;
-    }
-    for (const entry of state.entries) {
-      list.appendChild(renderCard(entry));
-    }
-  }
-
-  function renderCard(entry) {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    if (state.editingKey === entry.key) {
-      card.appendChild(renderEditForm(entry));
-      return card;
-    }
-
-    const textEl = document.createElement("div");
-    textEl.className = "entry-text" + (entry.status === "closed" ? " closed" : "");
-    textEl.innerHTML = linkify(entry.text);
-    card.appendChild(textEl);
-
-    if (entry.tags && entry.tags.length) {
-      const tagsRow = document.createElement("div");
-      tagsRow.className = "row wrap";
-      tagsRow.style.marginTop = "0.4rem";
-      for (const t of entry.tags) {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        chip.textContent = "#" + t;
-        tagsRow.appendChild(chip);
-      }
-      card.appendChild(tagsRow);
-    }
-
-    if (entry.links && entry.links.length) {
-      const linksEl = document.createElement("div");
-      linksEl.className = "muted links";
-      linksEl.style.marginTop = "0.3rem";
-      linksEl.textContent = "linked: " + entry.links.join(", ");
-      card.appendChild(linksEl);
-    }
-
-    const meta = document.createElement("div");
-    meta.className = "entry-key";
-    meta.style.marginTop = "0.4rem";
-    meta.textContent = entry.key;
-    card.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "actions";
-
-    if (entry.status === "open") {
-      actions.appendChild(makeButton("Resolve", () => resolveEntry(entry.key)));
+  function FilterCard({ scope, anchor, onScope, onAnchor }) {
+    // A real <input type=date>/<input type=month> rather than a hand-rolled
+    // calendar: the browser's own picker is better on every platform this gets
+    // opened on, and it keeps "jump to any date" as one control, not a grid.
+    let centre;
+    if (scope === "day") {
+      centre = html`<input type="date" value=${isoDate(anchor)} onChange=${(e) => {
+        const p = e.target.value.split("-");
+        if (p.length === 3) onAnchor(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])));
+      }} />`;
+    } else if (scope === "month") {
+      centre = html`<input type="month" value=${isoMonth(anchor)} onChange=${(e) => {
+        const p = e.target.value.split("-");
+        if (p.length === 2) onAnchor(new Date(Number(p[0]), Number(p[1]) - 1, 1));
+      }} />`;
     } else {
-      actions.appendChild(makeButton("Reopen", () => reopenEntry(entry.key)));
+      const from = startOfWeek(anchor);
+      centre = html`${shortDate(from)} – ${shortDate(addDays(from, 6))}`;
     }
-    actions.appendChild(makeButton("Edit", () => { state.editingKey = entry.key; renderList(); }));
-    actions.appendChild(makeButton("Delete", () => openDeleteDialog(entry), "danger"));
-    card.appendChild(actions);
 
-    return card;
+    const step = (dir) => {
+      if (scope === "day") onAnchor(addDays(anchor, dir));
+      else if (scope === "week") onAnchor(addDays(anchor, 7 * dir));
+      else if (scope === "month") onAnchor(addMonths(anchor, dir));
+    };
+
+    return html`
+      <div class="filter-card">
+        <div class="scopes">
+          ${SCOPES.map((s) => html`
+            <button key=${s.id} class=${scope === s.id ? "active" : ""}
+                    onClick=${() => onScope(s.id)}>${s.label}</button>`)}
+        </div>
+        <div class="period" hidden=${scope === "all"}>
+          <button class="step" aria-label="Previous" onClick=${() => step(-1)}>
+            <${Icon} d=${CHEVRON_L} size=${16} />
+          </button>
+          <div class="centre">${centre}</div>
+          <button class="step" aria-label="Next" onClick=${() => step(1)}>
+            <${Icon} d=${CHEVRON_R} size=${16} />
+          </button>
+        </div>
+      </div>`;
   }
 
-  function makeButton(label, onClick, cls) {
-    const btn = document.createElement("button");
-    if (cls) btn.className = cls;
-    btn.textContent = label;
-    btn.addEventListener("click", onClick);
-    return btn;
+  function TagChips({ tags }) {
+    return html`${tags.map((t) => html`<span key=${t} class="chip">#${t}</span>`)}`;
   }
 
-  function renderEditForm(entry) {
-    const wrap = document.createElement("div");
-    const textarea = document.createElement("textarea");
-    textarea.value = entry.text;
-    wrap.appendChild(textarea);
+  /* Each Task owns its own expanded/editing state. That's the whole reason for
+     the component layer: the list re-renders on every mutation, and keyed
+     diffing means an open edit box keeps its focus, caret and scroll position
+     instead of being rebuilt from scratch underneath the cursor. */
+  function Task({ entry, onToggle, onSave, onDelete }) {
+    const [expanded, setExpanded] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(entry.text);
+    const [busy, setBusy] = useState(false);
+    const done = entry.status === "closed";
 
-    const preview = document.createElement("div");
-    preview.className = "row wrap";
-    preview.style.margin = "0.4rem 0";
-    const updatePreview = () => {
-      preview.innerHTML = "";
-      for (const t of extractTags(textarea.value)) {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        chip.textContent = "#" + t;
-        preview.appendChild(chip);
+    const beginEdit = () => { setDraft(entry.text); setEditing(true); setExpanded(false); };
+
+    const save = async () => {
+      const text = draft.trim();
+      if (!text) return;
+      setBusy(true);
+      const ok = await onSave(entry, text);
+      setBusy(false);
+      if (ok) setEditing(false);
+    };
+
+    const body = editing
+      ? html`
+        <div>
+          <textarea class="edit-box" value=${draft} autofocus
+                    onInput=${(e) => setDraft(e.target.value)}
+                    onKeyDown=${(e) => {
+                      if (e.key === "Escape") setEditing(false);
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save();
+                    }} />
+          <div class="task-meta"><${TagChips} tags=${extractTags(draft)} /></div>
+          <div class="task-actions">
+            <button type="button" disabled=${busy || !draft.trim()} onClick=${save}>
+              ${busy ? "Saving…" : "Save"}
+            </button>
+            <button type="button" onClick=${() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>`
+      : html`
+        <div>
+          <div class="task-text" dangerouslySetInnerHTML=${{ __html: linkify(entry.text) }} />
+          ${(entry.tags.length > 0 || expanded) && html`
+            <div class="task-meta">
+              <${TagChips} tags=${entry.tags} />
+              ${/* The raw key is the address /todo resolve takes in chat, so it
+                    earns a place -- but only once expanded, since it's machine
+                    detail nobody scans a list for. */ ""}
+              ${expanded && html`<span class="chip plain">${entry.key}</span>`}
+            </div>`}
+          ${entry.links.length > 0 && html`
+            <div class="task-links">↳ ${entry.links.join(", ")}</div>`}
+          ${expanded && html`
+            <div class="task-actions">
+              <button type="button" onClick=${beginEdit}>Edit</button>
+              <button type="button" class="danger" onClick=${() => onDelete(entry)}>Delete</button>
+            </div>`}
+        </div>`;
+
+    return html`
+      <div class=${"task" + (done ? " done" : "")}>
+        <button class="check" aria-label=${done ? "Reopen" : "Complete"}
+                onClick=${() => onToggle(entry)}>
+          <${Icon} d=${CHECK_PATH} size=${12} sw=${3} />
+        </button>
+        <div class="task-body">${body}</div>
+        ${!editing && html`
+          <button class="more" aria-label="More actions"
+                  onClick=${() => setExpanded(!expanded)}>⋯</button>`}
+      </div>`;
+  }
+
+  function EmptyState({ hasCompleted }) {
+    return html`
+      <div class="empty">
+        <div class="glyph"><${Icon} d=${CHECK_PATH} size=${24} sw=${2} /></div>
+        <p>${hasCompleted ? "Everything here is done." : "Nothing scheduled here."}</p>
+        <p class="hint">${hasCompleted ? "Enjoy the quiet." : "Tap + to add the first one."}</p>
+      </div>`;
+  }
+
+  function OpenList({ entries, scope, taskProps }) {
+    // A single-day view needs no day headings -- the period bar above already
+    // says which day this is.
+    if (scope === "day") {
+      return html`${entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}`;
+    }
+    return html`${groupByDay(entries).map((g) => html`
+      <div key=${g.stamp}>
+        <div class="day-heading">
+          <span>${g.date ? dayHeading(g.date) : "Undated"}</span>
+          <span class="n">${g.entries.length}</span>
+        </div>
+        ${g.entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}
+      </div>`)}`;
+  }
+
+  /* Completed work collapses out of the way -- present for the score and for
+     reopening, but never competing with what is still open. */
+  function DoneSection({ entries, taskProps }) {
+    const [open, setOpen] = useState(false);
+    if (entries.length === 0) return null;
+    return html`
+      <div id="done-section">
+        <button id="done-toggle" class=${open ? "open" : ""} onClick=${() => setOpen(!open)}>
+          <span class="caret"><${Icon} d=${CHEVRON_R} size=${12} sw=${3} /></span>
+          <span>Completed · ${entries.length}</span>
+        </button>
+        ${open && html`
+          <div id="done-list">
+            ${entries.map((e) => html`<${Task} key=${e.key} entry=${e} ...${taskProps} />`)}
+          </div>`}
+      </div>`;
+  }
+
+  // A <dialog> is imperative by nature (showModal/close), so the one place the
+  // declarative tree has to reach into the DOM is here.
+  function useDialog(open, onClose) {
+    const ref = useRef(null);
+    useEffect(() => {
+      const el = ref.current;
+      if (!el) return;
+      if (open && !el.open) el.showModal();
+      if (!open && el.open) el.close();
+    }, [open]);
+    useEffect(() => {
+      const el = ref.current;
+      if (!el) return;
+      // Esc and backdrop dismissal both fire `close` without going through our
+      // buttons; without this the parent's state would say "open" forever.
+      const handler = () => onClose();
+      el.addEventListener("close", handler);
+      return () => el.removeEventListener("close", handler);
+    }, [onClose]);
+    return ref;
+  }
+
+  function ComposeDialog({ open, onClose, onAdd }) {
+    const [text, setText] = useState("");
+    const [busy, setBusy] = useState(false);
+    const ref = useDialog(open, onClose);
+
+    const submit = async () => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      setBusy(true);
+      const ok = await onAdd(trimmed);
+      setBusy(false);
+      if (ok) setText("");
+    };
+
+    return html`
+      <dialog id="compose-dialog" ref=${ref}>
+        <div class="sheet">
+          <h2>New todo</h2>
+          <textarea id="new-text" value=${text} autofocus
+                    placeholder=${"What needs doing?\n#tags and links work right in the text."}
+                    onInput=${(e) => setText(e.target.value)}
+                    onKeyDown=${(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+                    }} />
+          <div class="task-meta"><${TagChips} tags=${extractTags(text)} /></div>
+          <div class="sheet-actions">
+            <button class="btn" type="button" onClick=${onClose}>Cancel</button>
+            <button class="btn primary" type="button" disabled=${busy || !text.trim()}
+                    onClick=${submit}>${busy ? "Adding…" : "Add"}</button>
+          </div>
+        </div>
+      </dialog>`;
+  }
+
+  function DeleteDialog({ entry, onClose, onConfirm }) {
+    const ref = useDialog(!!entry, onClose);
+    return html`
+      <dialog id="delete-dialog" ref=${ref}>
+        <div class="sheet">
+          <h2>Delete permanently?</h2>
+          <p class="strong">${entry ? entry.text : ""}</p>
+          <p>This removes the file and commits the removal. Unlike completing a
+             todo, there is no reopening this one.</p>
+          <div class="sheet-actions">
+            <button class="btn" type="button" onClick=${onClose}>Cancel</button>
+            <button class="btn danger" type="button" onClick=${onConfirm}>Delete</button>
+          </div>
+        </div>
+      </dialog>`;
+  }
+
+  function Banner({ note }) {
+    return html`
+      <div id="banner" role="status"
+           class=${(note ? "show " : "") + (note && note.ok ? "ok" : "")}>
+        ${note ? note.text : ""}
+      </div>`;
+  }
+
+  function Login({ onToken }) {
+    const [code, setCode] = useState("");
+    const [error, setError] = useState("");
+
+    const submit = async (e) => {
+      e.preventDefault();
+      setError("");
+      try {
+        const res = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: code.trim() }),
+        });
+        // Read the body as text first, then try to parse it as JSON -- a 401
+        // from login_handler is JSON (`{"error": "..."}`), but a 429 from the
+        // rate limiter in front of this route is plain text ("Too Many
+        // Requests! Wait for Ns"), and blindly calling res.json() on that
+        // throws, masking the real status behind a generic "network error".
+        // Always surfacing res.status directly means a rate-limit and a bad
+        // code are never confused again.
+        const bodyText = await res.text();
+        let data = null;
+        try { data = JSON.parse(bodyText); } catch (parseErr) { /* not json */ }
+        if (!res.ok) {
+          setError("HTTP " + res.status + ": " + ((data && data.error) || bodyText || "login failed"));
+          return;
+        }
+        if (!data || !data.token) {
+          setError("unexpected response from server: " + bodyText);
+          return;
+        }
+        onToken(data.token);
+      } catch (err) {
+        setError("network error: " + err.message);
       }
     };
-    textarea.addEventListener("input", updatePreview);
-    updatePreview();
-    wrap.appendChild(preview);
 
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    actions.appendChild(makeButton("Save", async () => {
-      const text = textarea.value.trim();
-      if (!text) { showBanner("text must not be empty"); return; }
+    return html`
+      <div id="login-screen">
+        <form onSubmit=${submit}>
+          <div class="mark">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+          </div>
+          <h1>kamaji todos</h1>
+          <p class="sub">Enter the code from your authenticator</p>
+          <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]*" maxlength="6" placeholder="······" required autofocus
+                 value=${code} onInput=${(e) => setCode(e.target.value)} />
+          <div id="login-error">${error}</div>
+          <button type="submit" class="btn primary" style="width:100%; margin-top:0.75rem">Unlock</button>
+        </form>
+      </div>`;
+  }
+
+  /* ================= root ================= */
+
+  function App() {
+    const [authed, setAuthed] = useState(!!token());
+    const [entries, setEntries] = useState([]);
+    const [scope, setScope] = useState(() => {
+      const saved = safeGet(SCOPE_KEY);
+      return ["day", "week", "month", "all"].includes(saved) ? saved : "day";
+    });
+    const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+    const [note, setNote] = useState(null);
+    const [composing, setComposing] = useState(false);
+    const [deleting, setDeleting] = useState(null);
+
+    const notify = useCallback((text, ok) => {
+      setNote({ text, ok: ok === true, at: Date.now() });
+    }, []);
+
+    useEffect(() => {
+      if (!note) return;
+      const t = setTimeout(() => setNote(null), 4000);
+      return () => clearTimeout(t);
+    }, [note]);
+
+    const api = useCallback(async (path, options) => {
+      options = options || {};
+      const headers = Object.assign({}, options.headers, { Authorization: "Bearer " + token() });
+      if (options.body !== undefined) headers["Content-Type"] = "application/json";
+      const res = await fetch(path, Object.assign({}, options, { headers }));
+      if (res.status === 401) {
+        localStorage.removeItem(TOKEN_KEY);
+        setAuthed(false);
+        throw new Error("session expired, please log in again");
+      }
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* no body */ }
+      if (!res.ok) {
+        throw new Error((data && (data.error || data.message)) || ("request failed (" + res.status + ")"));
+      }
+      return data;
+    }, []);
+
+    const reload = useCallback(async () => {
+      try {
+        // One `status=all` read rather than two round trips: the completion
+        // score needs both halves of the same window, and every scope filter
+        // below is a pure client-side slice of this one list.
+        setEntries(await api("/api/todos?status=all"));
+      } catch (err) {
+        notify(err.message);
+      }
+    }, [api, notify]);
+
+    useEffect(() => { if (authed) reload(); }, [authed, reload]);
+
+    const scoped = useMemo(
+      () => entries.filter((e) => inScope(e, scope, anchor)),
+      [entries, scope, anchor]
+    );
+    const open = useMemo(() => scoped.filter((e) => e.status === "open"), [scoped]);
+    const closed = useMemo(() => scoped.filter((e) => e.status === "closed"), [scoped]);
+
+    const onToggle = useCallback(async (entry) => {
+      const action = entry.status === "closed" ? "reopen" : "resolve";
+      try {
+        await api("/api/todos/" + encodeURIComponent(entry.key) + "/" + action, { method: "POST" });
+        await reload();
+      } catch (err) { notify(err.message); }
+    }, [api, reload, notify]);
+
+    const onSave = useCallback(async (entry, text) => {
       try {
         await api("/api/todos/" + encodeURIComponent(entry.key), {
           method: "PATCH",
           body: JSON.stringify({ text, tags: extractTags(text) }),
         });
-        state.editingKey = null;
-        await loadEntries();
-      } catch (err) { showBanner(err.message); }
-    }, "primary"));
-    actions.appendChild(makeButton("Cancel", () => { state.editingKey = null; renderList(); }));
-    wrap.appendChild(actions);
-    return wrap;
-  }
+        await reload();
+        return true;
+      } catch (err) { notify(err.message); return false; }
+    }, [api, reload, notify]);
 
-  async function resolveEntry(key) {
-    try {
-      await api("/api/todos/" + encodeURIComponent(key) + "/resolve", { method: "POST" });
-      await loadEntries();
-    } catch (err) { showBanner(err.message); }
-  }
+    const onAdd = useCallback(async (text) => {
+      try {
+        await api("/api/todos", {
+          method: "POST",
+          body: JSON.stringify({ text, tags: extractTags(text) }),
+        });
+        // A new todo is always filed under today, so a stale day/week/month
+        // anchor would swallow it silently -- snap back to now rather than
+        // letting a successful add look like a failure.
+        if (scope !== "all") setAnchor(startOfDay(new Date()));
+        setComposing(false);
+        await reload();
+        notify("Added", true);
+        return true;
+      } catch (err) { notify(err.message); return false; }
+    }, [api, reload, notify, scope]);
 
-  async function reopenEntry(key) {
-    try {
-      await api("/api/todos/" + encodeURIComponent(key) + "/reopen", { method: "POST" });
-      await loadEntries();
-    } catch (err) { showBanner(err.message); }
-  }
+    const onConfirmDelete = useCallback(async () => {
+      const entry = deleting;
+      setDeleting(null);
+      if (!entry) return;
+      try {
+        await api("/api/todos/" + encodeURIComponent(entry.key), { method: "DELETE" });
+        await reload();
+      } catch (err) { notify(err.message); }
+    }, [deleting, api, reload, notify]);
 
-  function openDeleteDialog(entry) {
-    state.pendingDeleteKey = entry.key;
-    document.getElementById("delete-target").textContent = entry.key + ": " + entry.text;
-    document.getElementById("delete-dialog").showModal();
-  }
+    const onLogout = useCallback(async () => {
+      try { await api("/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
+      localStorage.removeItem(TOKEN_KEY);
+      setAuthed(false);
+      setEntries([]);
+    }, [api]);
 
-  async function addTodo() {
-    const textarea = document.getElementById("new-text");
-    const text = textarea.value.trim();
-    if (!text) return;
-    const addBtn = document.getElementById("add-btn");
-    addBtn.disabled = true;
-    try {
-      await api("/api/todos", {
-        method: "POST",
-        body: JSON.stringify({ text, tags: extractTags(text) }),
-      });
-      textarea.value = "";
-      document.getElementById("tag-preview").innerHTML = "";
-      if (state.filter === "open") await loadEntries();
-    } catch (err) {
-      showBanner(err.message);
-    } finally {
-      addBtn.disabled = false;
+    const onScope = useCallback((next) => { setScope(next); safeSet(SCOPE_KEY, next); }, []);
+
+    if (!authed) {
+      return html`
+        <${Login} onToken=${(t) => { safeSet(TOKEN_KEY, t); setAuthed(true); }} />
+        <${Banner} note=${note} />`;
     }
+
+    const taskProps = { onToggle, onSave, onDelete: setDeleting };
+    const total = scoped.length;
+
+    return html`
+      <div id="app">
+        <${Hero} done=${closed.length} total=${total} onLogout=${onLogout} />
+        <${FilterCard} scope=${scope} anchor=${anchor} onScope=${onScope} onAnchor=${setAnchor} />
+        <main>
+          <div id="list">
+            ${open.length === 0
+              ? html`<${EmptyState} hasCompleted=${closed.length > 0} />`
+              : html`<${OpenList} entries=${open} scope=${scope} taskProps=${taskProps} />`}
+          </div>
+          <${DoneSection} entries=${closed} taskProps=${taskProps} />
+          <footer class="tally">
+            ${total === 0 ? ""
+              : open.length === 0 ? "All " + total + " done. Nothing left here."
+              : open.length + " of " + total + " still open."}
+          </footer>
+        </main>
+      </div>
+      <button id="fab" aria-label="Add todo" onClick=${() => setComposing(true)}>
+        <${Icon} d="M12 5v14M5 12h14" size=${24} />
+      </button>
+      <${ComposeDialog} open=${composing} onClose=${() => setComposing(false)} onAdd=${onAdd} />
+      <${DeleteDialog} entry=${deleting} onClose=${() => setDeleting(null)} onConfirm=${onConfirmDelete} />
+      <${Banner} note=${note} />`;
   }
 
-  function setFilter(filter) {
-    state.filter = filter;
-    state.editingKey = null;
-    document.getElementById("tab-open").classList.toggle("active", filter === "open");
-    document.getElementById("tab-closed").classList.toggle("active", filter === "closed");
-    loadEntries();
-  }
-
-  document.getElementById("login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const code = document.getElementById("totp").value.trim();
-    const errEl = document.getElementById("login-error");
-    errEl.textContent = "";
-    try {
-      const res = await fetch("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      // Read the body as text first, then try to parse it as JSON --
-      // a 401 from login_handler is JSON (`{"error": "..."}`), but a 429
-      // from the rate limiter in front of this route is plain text
-      // ("Too Many Requests! Wait for Ns"), and blindly calling
-      // res.json() on that throws, masking the real status behind a
-      // generic "network error". Always surfacing res.status directly
-      // means a rate-limit and a bad code are never confused again.
-      const bodyText = await res.text();
-      let data = null;
-      try { data = JSON.parse(bodyText); } catch (parseErr) { /* not json */ }
-      if (!res.ok) {
-        const detail = (data && data.error) || bodyText || "login failed";
-        errEl.textContent = "HTTP " + res.status + ": " + detail;
-        return;
-      }
-      if (!data || !data.token) {
-        errEl.textContent = "unexpected response from server: " + bodyText;
-        return;
-      }
-      setToken(data.token);
-      showApp();
-    } catch (err) {
-      errEl.textContent = "network error: " + err.message;
-    }
-  });
-
-  document.getElementById("logout-btn").addEventListener("click", async () => {
-    try { await api("/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
-    clearToken();
-    showLogin();
-  });
-
-  document.getElementById("tab-open").addEventListener("click", () => setFilter("open"));
-  document.getElementById("tab-closed").addEventListener("click", () => setFilter("closed"));
-  document.getElementById("add-btn").addEventListener("click", addTodo);
-  document.getElementById("new-text").addEventListener("input", () => {
-    const preview = document.getElementById("tag-preview");
-    preview.innerHTML = "";
-    for (const t of extractTags(document.getElementById("new-text").value)) {
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.textContent = "#" + t;
-      preview.appendChild(chip);
-    }
-  });
-  document.getElementById("new-text").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addTodo();
-  });
-
-  document.getElementById("delete-cancel").addEventListener("click", () => {
-    document.getElementById("delete-dialog").close();
-  });
-  document.getElementById("delete-confirm").addEventListener("click", async () => {
-    const key = state.pendingDeleteKey;
-    document.getElementById("delete-dialog").close();
-    if (!key) return;
-    try {
-      await api("/api/todos/" + encodeURIComponent(key), { method: "DELETE" });
-      await loadEntries();
-    } catch (err) { showBanner(err.message); }
-  });
-
-  if (token()) { showApp(); } else { showLogin(); }
+  render(html`<${App} />`, document.getElementById("root"));
 })();
 </script>
 </body>
