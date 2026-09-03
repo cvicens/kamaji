@@ -500,9 +500,23 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      const data = await res.json();
+      // Read the body as text first, then try to parse it as JSON --
+      // a 401 from login_handler is JSON (`{"error": "..."}`), but a 429
+      // from the rate limiter in front of this route is plain text
+      // ("Too Many Requests! Wait for Ns"), and blindly calling
+      // res.json() on that throws, masking the real status behind a
+      // generic "network error". Always surfacing res.status directly
+      // means a rate-limit and a bad code are never confused again.
+      const bodyText = await res.text();
+      let data = null;
+      try { data = JSON.parse(bodyText); } catch (parseErr) { /* not json */ }
       if (!res.ok) {
-        errEl.textContent = (data && data.error) || "login failed";
+        const detail = (data && data.error) || bodyText || "login failed";
+        errEl.textContent = "HTTP " + res.status + ": " + detail;
+        return;
+      }
+      if (!data || !data.token) {
+        errEl.textContent = "unexpected response from server: " + bodyText;
         return;
       }
       setToken(data.token);

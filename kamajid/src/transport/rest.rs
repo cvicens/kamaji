@@ -181,6 +181,11 @@ async fn login_handler(
         .sessions
         .verify_totp(&state.totp_secret, &body.code)
     {
+        // Deliberately no code/secret in this log -- just enough to tell a
+        // wrong/replayed code apart from "the request never reached here at
+        // all" (e.g. the rate limiter answering first) when debugging a
+        // login failure after the fact.
+        tracing::warn!("rejected /auth/login: invalid or already-used totp code");
         return Err(ApiError::InvalidTotp);
     }
 
@@ -193,6 +198,7 @@ async fn login_handler(
             tracing::error!(%err, "failed to create rest api session");
             ApiError::Internal
         })?;
+    tracing::info!("accepted /auth/login, issued a new session");
 
     let expires_at_unix = now_unix() + state.session_ttl.as_secs();
     Ok(Json(LoginResponse {
