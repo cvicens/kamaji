@@ -118,6 +118,7 @@ pub async fn run(state: Arc<DaemonState>) {
         .route(
             "/api/facts",
             get(list_facts_handler)
+                .post(create_fact_handler)
                 .patch(edit_fact_handler)
                 .delete(delete_fact_handler),
         )
@@ -618,6 +619,65 @@ async fn list_facts_handler(
         ApiError::Internal
     })?;
     Ok(Json(facts))
+}
+
+#[derive(Deserialize)]
+struct CreateFactRequest {
+    text: String,
+}
+
+/// Creates a fact from raw text -- the one write on this page that invokes
+/// the agent, and the reason it doesn't go through `run_queued_write` like
+/// every other one: a fact's `title`/`summary`/`value`/`slug` come from the
+/// agent, so this has to run the whole `/fact` pipeline, and
+/// `run_cli_style_request` is the only helper that budgets
+/// `agent_timeout` on top of `git_timeout` (`run_queued_write`'s
+/// git-time-plus-15s would abandon a perfectly healthy agent call).
+///
+/// Deliberately *the same* `/fact` command path chat and the `kamaji` CLI
+/// already take -- not a parallel implementation -- so the `.orig` written
+/// here is the user's raw text verbatim, exactly as it is for a fact logged
+/// from Telegram. That equivalence is the whole reason creating a fact is
+/// offered at all; a web-only shortcut that hand-authored the fields would
+/// have nothing to preserve in the `.orig` (see TODO.md).
+///
+/// One known rough edge, inherited from `/api/cli` rather than introduced
+/// here: `CliResponse::ok` reports "a reply came back", not "the job
+/// succeeded" (the waiter channel carries only text). A fact whose agent
+/// call returned unparseable JSON therefore answers `ok: true` with a
+/// message that says it failed -- which is why the UI shows this reply's
+/// text verbatim instead of a generic "Added".
+async fn create_fact_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateFactRequest>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    if body.text.trim().is_empty() {
+        return Err(ApiError::BadRequest("text must not be empty".to_string()));
+    }
+
+    let reply = transport::run_cli_style_request(
+        &state.daemon,
+        CliRequest::Fact { text: body.text },
+        |request_id| {
+            (
+                ChatRef::Rest { request_id },
+                MessageRef::Rest { request_id },
+            )
+        },
+    )
+    .await;
+
+    // Reshaped into the `{ok, message}` envelope every other web write
+    // returns, so the page has one response contract to handle rather than
+    // a special case for this route.
+    let envelope = serde_json::json!({ "ok": reply.ok, "message": reply.text });
+    Ok((
+        [(header::CONTENT_TYPE, "application/json")],
+        envelope.to_string(),
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]

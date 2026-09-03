@@ -466,6 +466,11 @@
   .sheet h2 { margin: 0 0 0.9rem; font-size: 1rem; font-weight: 600; }
   .sheet p { margin: 0 0 0.6rem; font-size: 0.875rem; color: var(--muted); line-height: 1.5; }
   .sheet .strong { color: var(--text); font-weight: 600; }
+  .sheet-note {
+    margin: 0.6rem 0 0; padding: 0.55rem 0.7rem;
+    background: var(--surface-sunken); border-radius: 10px;
+    font-size: 0.75rem; color: var(--muted); line-height: 1.5;
+  }
   #new-text {
     width: 100%;
     border: 1.5px solid var(--border);
@@ -662,8 +667,14 @@
     fact: {
       id: "fact", tab: "Facts", one: "fact", eyebrow: "What you actually did",
       list: "/api/facts", base: "/api/facts",
-      emptyNone: "Nothing logged here.",
-      emptyHintNone: "Facts are logged with /fact in chat, not from this page.",
+      addTitle: "Log a fact", busyLabel: "Summarising…",
+      addPlaceholder: "What did you get done?\nWrite it however you'd say it \u2014 this is kept verbatim.",
+      // Facts are the one thing here that costs an agent call to create, and
+      // it is not instant. Saying so up front is cheaper than a spinner that
+      // looks stuck.
+      addNote: "The agent turns this into a title, summary and value. Your raw text is kept verbatim alongside it, so nothing is lost in the summarising. Takes a few seconds.",
+      emptyDone: "Nothing logged here.", emptyNone: "Nothing logged here.",
+      emptyHintDone: "Tap + to log one.", emptyHintNone: "Tap + to log one.",
     },
   };
 
@@ -1159,10 +1170,11 @@
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
                     }} />
           <div class="task-meta"><${TagChips} tags=${extractTags(text)} /></div>
+          ${domain.addNote && html`<p class="sheet-note">${domain.addNote}</p>`}
           <div class="sheet-actions">
             <button class="btn" type="button" onClick=${onClose}>Cancel</button>
             <button class="btn primary" type="button" disabled=${busy || !text.trim()}
-                    onClick=${submit}>${busy ? "Adding…" : "Add"}</button>
+                    onClick=${submit}>${busy ? domain.busyLabel || "Adding…" : "Add"}</button>
           </div>
         </div>
       </dialog>`;
@@ -1394,9 +1406,15 @@
 
     const onAdd = useCallback(async (text) => {
       try {
-        await api(domain.base, {
+        // A fact is created by the same `/fact` pipeline chat uses -- the
+        // agent writes its title/summary/value and the raw text becomes the
+        // .orig -- so the request body is just that raw text, and the reply
+        // is the daemon's own message rather than a status this page invents.
+        const reply = await api(domain.base, {
           method: "POST",
-          body: JSON.stringify({ text, tags: extractTags(text) }),
+          body: domainId === "fact"
+            ? JSON.stringify({ text })
+            : JSON.stringify({ text, tags: extractTags(text) }),
         });
         // A new entry is always filed under today, so a stale day/week/month
         // anchor would swallow it silently -- snap back to now rather than
@@ -1404,10 +1422,14 @@
         if (scope !== "all") setAnchor(startOfDay(new Date()));
         setComposing(false);
         await reload();
-        notify("Added", true);
+        // Shown verbatim for a fact: the daemon's reply is the only thing
+        // that knows whether the agent actually parsed (see
+        // `create_fact_handler`), so inventing an "Added" here could paper
+        // over an ingestion failure.
+        notify(domainId === "fact" && reply && reply.message ? reply.message : "Added", true);
         return true;
       } catch (err) { notify(err.message); return false; }
-    }, [api, reload, notify, scope, domain]);
+    }, [api, reload, notify, scope, domain, domainId]);
 
     /* Every delete goes through one confirm dialog, but each domain has to say
        what it actually costs -- see DeleteDialog. */
@@ -1510,10 +1532,9 @@
           </footer>
         </main>
       </div>
-      ${!isFacts && html`
-        <button id="fab" aria-label=${"Add " + domain.one} onClick=${() => setComposing(true)}>
-          <${Icon} d="M12 5v14M5 12h14" size=${24} />
-        </button>`}
+      <button id="fab" aria-label=${"Add " + domain.one} onClick=${() => setComposing(true)}>
+        <${Icon} d="M12 5v14M5 12h14" size=${24} />
+      </button>
       <${ComposeDialog} open=${composing} domain=${domain}
                         onClose=${() => setComposing(false)} onAdd=${onAdd} />
       <${DeleteDialog} target=${deleting} onClose=${() => setDeleting(null)}

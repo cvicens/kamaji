@@ -647,11 +647,30 @@ and editable". Todos and goals came out symmetric; facts deliberately did not.
       Preact inserted into a rendered list opened unfocused -- `useAutoFocus`
       replaces it, which is what makes the keyed-diffing caret guarantee
       actually observable.
-- [ ] **Not done in this pass**: no way to *create* a fact from the web UI.
-      A fact's title/summary/value/slug come from the agent and its `.orig`
-      preserves the raw message verbatim; a web form has neither to offer, and
-      inventing them would break the one property `/fact` exists to hold.
-      `/fact` in chat stays the only way to mint one.
+- [x] **Creating a fact from the web goes through the real `/fact`
+      pipeline.** `POST /api/facts { text }` calls
+      `transport::run_cli_style_request` with `CliRequest::Fact` -- the same
+      path chat and the `kamaji` CLI already take -- so the agent writes
+      title/summary/value/slug and the `.orig` holds the user's raw text
+      verbatim, byte-identical to a fact logged from Telegram. Rejected the
+      alternative of a hand-authored four-field form: there'd be no
+      summarised-away original for the `.orig` to preserve, which hollows out
+      the one property the whole domain rests on.
+      Two things this route must not lose: it is the **only** web write that
+      invokes the agent, so it goes through `run_cli_style_request` (which
+      budgets `agent_timeout + git_timeout + 30s`) and *not*
+      `run_queued_write` (git time plus 15s, which would abandon a healthy
+      agent call); and the compose dialog says up front that it costs an
+      agent call and takes a few seconds, rather than showing a spinner that
+      looks stuck.
+- [ ] **Known rough edge, inherited not introduced**: `CliResponse::ok`
+      reports "a reply came back", not "the job succeeded" -- the
+      `WaiterRegistry` channel carries only text. So a fact whose agent call
+      returns unparseable JSON answers `ok: true` with a message saying it
+      failed. The web UI works around it by showing that reply verbatim
+      instead of a generic "Added", so the user still sees the truth; fixing
+      it properly means widening the waiter channel to carry a status, which
+      would also improve `/api/cli` and the `kamaji` CLI's exit code.
 - [ ] **Not done in this pass**: no way to add or remove a todo->goal or
       goal->fact link from the web UI. `/todo link` and `/demonstrate` remain
       the only writers, which is also why a linked goal can only be deleted

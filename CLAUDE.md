@@ -35,7 +35,11 @@ A Rust daemon on a Hetzner VM. Messages (from Telegram, and optionally Matrix �
   every item dates off one accessor (`itemDate` -- `EntryKey` for a checklist
   entry, `timestamp` frontmatter for a fact), never a per-domain parser. Facts
   have no open/closed status, so they get no checkbox and no completion ring --
-  don't render either as a disabled or 0/N placeholder.
+  don't render either as a disabled or 0/N placeholder. Creating a fact is the
+  one web write that invokes the agent: it reuses the real `/fact` pipeline via
+  `run_cli_style_request` (the only helper budgeting `agent_timeout`), never a
+  web-only shortcut that hand-authors the fields -- the `.orig` has to keep
+  holding the raw message verbatim.
 
 ## Data model (redb tables)
 - `pending<u64, &str>` — job_id → JSON payload (`Job { chat: ChatRef, reply_to: MessageRef, kind }`), tagged `JobKind::Ingest { raw_text, urls }` or `JobKind::Command { name, args }`. `ChatRef`/`MessageRef` (`src/chat.rs`) are platform-tagged enums (`Telegram { chat_id: i64 }` / `Matrix { room_id: String }`, etc.) — Matrix room/event ids are opaque strings, not integers, so this isn't a bare int field.
