@@ -14,6 +14,7 @@ mod demonstrate_job;
 mod fact_job;
 mod goal_job;
 mod ingest_job;
+mod todo_api_job;
 mod todo_job;
 
 /// Appends a note about the git push outcome to a confirmation message, if
@@ -214,11 +215,33 @@ pub async fn process_job(
                 command_prompt(name, args),
             )
         }
+        // The web UI's structured todo API (see `queue::TodoApiOp`'s doc
+        // comment) -- never invokes Claude, so no tokens; the reply is a
+        // JSON string rather than chat-formatted text, and there's no
+        // `command_prompt`-shaped debug entry since it didn't come from a
+        // `/command` line, so the op's `Debug` form stands in for one.
+        JobKind::TodoApi(op) => {
+            let (reply, is_success) = todo_api_job::process(state, op).await;
+            (
+                reply,
+                None,
+                if is_success {
+                    JobStatus::Success
+                } else {
+                    JobStatus::Failed
+                },
+                None,
+                format!("{op:?}"),
+            )
+        }
     };
 
     let kind_summary = match &job.kind {
         JobKind::Ingest { .. } => JobKindSummary::Ingest,
         JobKind::Command { name, .. } => JobKindSummary::Command { name: name.clone() },
+        JobKind::TodoApi(_) => JobKindSummary::Command {
+            name: "todo_api".to_string(),
+        },
     };
 
     // Debug-only: record what triggered this job (the full Claude prompt --

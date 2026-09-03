@@ -21,6 +21,42 @@ pub struct CommandAttachment {
     pub mime_type: Option<String>,
 }
 
+/// A structured `/todo` write operation from the web UI's REST API
+/// (`kamajid::transport::rest`'s `/api/todos/*` routes) -- distinct from
+/// `JobKind::Command { name: "todo", .. }` because that path is reachable
+/// from chat/CLI, parses free-text args, and replies with a human-formatted
+/// string. This one carries typed fields and its handler
+/// (`worker::todo_api_job`) replies with a JSON string instead, so the
+/// browser can render structured rows rather than parse chat text back
+/// apart. `key` fields are `EntryKey`'s display string (`"2026-08-03-2"`),
+/// not a structured `EntryKey`, since that's the shape a URL path segment
+/// or JSON request body naturally carries -- parsed back with `.parse()` in
+/// the handler. `Edit`/`Delete` have no `todo::TodoAction` counterpart on
+/// purpose: they're new capabilities scoped to this access point only (see
+/// TODO.md's "TODO management web UI" note).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum TodoApiOp {
+    Add {
+        text: String,
+        tags: Vec<String>,
+    },
+    Resolve {
+        key: String,
+    },
+    Reopen {
+        key: String,
+    },
+    Edit {
+        key: String,
+        text: String,
+        tags: Vec<String>,
+    },
+    Delete {
+        key: String,
+    },
+}
+
 /// What a job actually does. This is the tagged enum from the spec, matched
 /// on directly by the worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +74,9 @@ pub enum JobKind {
         #[serde(default)]
         attachment: Option<CommandAttachment>,
     },
+    /// See `TodoApiOp`'s doc comment -- never constructed by chat/CLI
+    /// parsing, only by `kamajid::transport::rest`'s `/api/todos/*` routes.
+    TodoApi(TodoApiOp),
 }
 
 /// The full pending-table payload. `JobKind` alone doesn't carry enough

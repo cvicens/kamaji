@@ -40,6 +40,11 @@ pub(super) struct ParsedEntry {
     pub text: String,
     pub status: Status,
     pub links: Vec<String>,
+    /// The entry's original `timestamp:` frontmatter value -- only needed so
+    /// `edit` can preserve creation time across a content rewrite; `None` if
+    /// the line is missing or unparsable (never true for a file this module
+    /// wrote itself, but a hand-edited file shouldn't panic over it).
+    pub timestamp: Option<DateTime<Utc>>,
 }
 
 /// Renders a `link: [...]` frontmatter line's value from wikilink targets,
@@ -150,6 +155,7 @@ pub(super) fn parse(cfg: &Config, contents: &str) -> Option<ParsedEntry> {
     let mut tags = Vec::new();
     let mut status = Status::Open;
     let mut links = Vec::new();
+    let mut timestamp = None;
     for line in frontmatter.lines() {
         if let Some(value) = line
             .strip_prefix("tags: [")
@@ -167,6 +173,10 @@ pub(super) fn parse(cfg: &Config, contents: &str) -> Option<ParsedEntry> {
             } else {
                 Status::Open
             };
+        } else if let Some(value) = line.strip_prefix("timestamp: ") {
+            timestamp = chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%dT%H:%M:%SZ")
+                .ok()
+                .map(|naive| naive.and_utc());
         } else if let Some(field) = cfg.link_field {
             let prefix = format!("{field}: ");
             if let Some(value) = line.strip_prefix(&prefix) {
@@ -180,6 +190,7 @@ pub(super) fn parse(cfg: &Config, contents: &str) -> Option<ParsedEntry> {
         text: body.to_string(),
         status,
         links,
+        timestamp,
     })
 }
 
@@ -267,6 +278,38 @@ pub(super) fn add_link(
         source,
     })?;
     Ok(Some(()))
+}
+
+/// Rewrites an already-existing entry file's tags/text in place, preserving
+/// its original creation `timestamp:`, `status:`, and `links:` -- everything
+/// that isn't the content the user is editing. Re-derives `title`/
+/// `description` from the new text the same way `render` does for a
+/// brand-new entry, so the frontmatter never drifts from the body it
+/// describes. Returns `Err(ChecklistError::NotFound)` if `path` doesn't
+/// parse as a per-entry file at all (a legacy month-file line has no single
+/// file to rewrite -- editing that format isn't supported).
+pub(super) fn edit(
+    cfg: &Config,
+    path: &Path,
+    tags: &[String],
+    text: &str,
+) -> Result<(), ChecklistError> {
+    let contents = std::fs::read_to_string(path).map_err(|source| ChecklistError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let Some(parsed) = parse(cfg, &contents) else {
+        return Err(ChecklistError::NotFound(format!(
+            "{} (not a per-entry file, can't be edited)",
+            path.display()
+        )));
+    };
+    let when = parsed.timestamp.unwrap_or_else(Utc::now);
+    let rendered = render(cfg, when, tags, text, parsed.status, &parsed.links);
+    std::fs::write(path, rendered).map_err(|source| ChecklistError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -399,6 +442,49 @@ mod tests {
         let contents = "---\ntype: thing\ntitle: \"x\"\ndescription: \"x\"\ntags: []\ntimestamp: 2026-07-17T10:30:00Z\nstatus: open\nlink: \"[[goals/2026/2026-08-03-1]]\"\n---\n\nx\n";
         let parsed = parse(&TEST_CFG, contents).unwrap();
         assert_eq!(parsed.links, vec!["goals/2026/2026-08-03-1"]);
+    }
+
+    #[test]
+    fn edit_rewrites_text_and_tags_preserving_status_links_and_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entry.md");
+        let links = vec!["goals/2026/2026-08-02-1".to_string()];
+        std::fs::write(
+            &path,
+            render(
+                &TEST_CFG,
+                when(),
+                &["work".to_string()],
+                "original text",
+                Status::Closed,
+                &links,
+            ),
+        )
+        .unwrap();
+
+        edit(&TEST_CFG, &path, &["urgent".to_string()], "new text").unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let parsed = parse(&TEST_CFG, &contents).unwrap();
+        assert_eq!(parsed.text, "new text");
+        assert_eq!(parsed.tags, vec!["urgent"]);
+        // Status and links are untouched by an edit -- only content changes.
+        assert_eq!(parsed.status, Status::Closed);
+        assert_eq!(parsed.links, links);
+        assert_eq!(parsed.timestamp, Some(when()));
+        assert!(contents.contains("title: \"new text\""));
+    }
+
+    #[test]
+    fn edit_rejects_non_frontmatter_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entry.md");
+        std::fs::write(&path, "not a frontmatter file").unwrap();
+
+        assert!(matches!(
+            edit(&TEST_CFG, &path, &[], "new text"),
+            Err(ChecklistError::NotFound(_))
+        ));
     }
 
     #[test]

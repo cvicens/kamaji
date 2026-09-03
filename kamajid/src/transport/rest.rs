@@ -1,13 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use kamaji_core::chat::{ChatRef, MessageRef};
+use kamaji_core::checklist::{Entry, StatusFilter};
 use kamaji_core::ipc::{CliRequest, CliResponse};
+use kamaji_core::queue::{Job, JobKind, TodoApiOp};
+use kamaji_core::todo;
 use serde::{Deserialize, Serialize};
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
@@ -15,6 +18,12 @@ use tower_governor::GovernorLayer;
 
 use crate::state::DaemonState;
 use crate::transport;
+
+/// The static single-page todo web UI (see TODO.md's "TODO management web
+/// UI" note) -- embedded at compile time rather than read from disk at
+/// startup, matching how this daemon has no other runtime-loaded asset
+/// directory to manage or get the deploy path wrong for.
+const TODO_APP_HTML: &str = include_str!("todo_app.html");
 
 /// State handed to every REST handler. Built once in `run()`, after
 /// confirming `state.core.config.rest_api` is `Some` -- captures the TOTP
@@ -81,6 +90,14 @@ pub async fn run(state: Arc<DaemonState>) {
         )
         .route("/api/cli", post(cli_handler))
         .route("/auth/logout", post(logout_handler))
+        .route("/app", get(app_handler))
+        .route("/api/todos", get(list_todos_handler).post(add_todo_handler))
+        .route(
+            "/api/todos/:key",
+            patch(edit_todo_handler).delete(delete_todo_handler),
+        )
+        .route("/api/todos/:key/resolve", post(resolve_todo_handler))
+        .route("/api/todos/:key/reopen", post(reopen_todo_handler))
         .with_state(rest_state);
 
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
@@ -101,17 +118,46 @@ enum ApiError {
     InvalidTotp,
     Unauthorized,
     Internal,
+    BadRequest(String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            ApiError::InvalidTotp => (StatusCode::UNAUTHORIZED, "invalid totp code"),
-            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "missing or invalid bearer token"),
-            ApiError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+            ApiError::InvalidTotp => (StatusCode::UNAUTHORIZED, "invalid totp code".to_string()),
+            ApiError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "missing or invalid bearer token".to_string(),
+            ),
+            ApiError::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_string(),
+            ),
+            ApiError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
+}
+
+/// Shared bearer-token check for every `/api/*` route (`/api/cli` and every
+/// `/api/todos/*` route) -- factored out once a third and fourth call site
+/// appeared, rather than repeating `bearer_token(...).ok_or(...)` plus the
+/// `validate_session` round trip in each handler.
+async fn require_session(state: &RestState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
+    let valid = state
+        .daemon
+        .core
+        .sessions
+        .validate_session(token)
+        .map_err(|err| {
+            tracing::error!(%err, "failed to validate rest api session");
+            ApiError::Internal
+        })?;
+    if !valid {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -160,19 +206,7 @@ async fn cli_handler(
     headers: HeaderMap,
     Json(request): Json<CliRequest>,
 ) -> Result<Json<CliResponse>, ApiError> {
-    let token = bearer_token(&headers).ok_or(ApiError::Unauthorized)?;
-    let valid = state
-        .daemon
-        .core
-        .sessions
-        .validate_session(token)
-        .map_err(|err| {
-            tracing::error!(%err, "failed to validate rest api session");
-            ApiError::Internal
-        })?;
-    if !valid {
-        return Err(ApiError::Unauthorized);
-    }
+    require_session(&state, &headers).await?;
 
     let response = transport::run_cli_style_request(&state.daemon, request, |request_id| {
         (
@@ -193,6 +227,10 @@ async fn logout_handler(
     State(state): State<RestState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // Deliberately not `require_session` -- revoking an already-invalid
+    // token must still succeed (see the doc comment above), whereas
+    // `require_session` would reject the request before it ever reaches
+    // `revoke_session`.
     let token = bearer_token(&headers).ok_or(ApiError::Unauthorized)?;
     state
         .daemon
@@ -204,6 +242,168 @@ async fn logout_handler(
             ApiError::Internal
         })?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Serves the static todo web UI. Unauthenticated by design -- it's inert
+/// HTML/CSS/JS with no embedded secret; the page itself calls `/auth/login`
+/// and stores the resulting bearer token client-side (`localStorage`)
+/// before any `/api/todos` call, the same TOTP-then-bearer flow `kamaji
+/// login`/`/api/cli` already use.
+async fn app_handler() -> Html<&'static str> {
+    Html(TODO_APP_HTML)
+}
+
+#[derive(Deserialize)]
+struct ListTodosQuery {
+    status: Option<String>,
+}
+
+async fn list_todos_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Query(params): Query<ListTodosQuery>,
+) -> Result<Json<Vec<Entry>>, ApiError> {
+    require_session(&state, &headers).await?;
+    let filter = match params.status.as_deref() {
+        None | Some("open") => StatusFilter::Open,
+        Some("closed") => StatusFilter::Closed,
+        Some(other) => {
+            return Err(ApiError::BadRequest(format!(
+                "status must be 'open' or 'closed', got '{other}'"
+            )))
+        }
+    };
+    // A direct filesystem read, not routed through the queue -- same
+    // "reads don't need write-serialization" precedent `/status`/`/history`
+    // already set for `CommandMode::Sync` commands (see commands.rs).
+    let entries =
+        todo::list_entries(&state.daemon.core.config.notes_repo_path, filter).map_err(|err| {
+            tracing::error!(%err, "failed to list todos for web api");
+            ApiError::Internal
+        })?;
+    Ok(Json(entries))
+}
+
+/// Enqueues a `JobKind::TodoApi` write and awaits its JSON reply --
+/// deliberately bypasses `transport::dispatch_routed_job`/
+/// `run_cli_style_request`: those require the job to name a
+/// `commands::COMMANDS`-registered command, which `TodoApiOp` intentionally
+/// isn't (see `TodoApiOp`'s doc comment -- `Edit`/`Delete` in particular
+/// must stay unreachable from chat). Still goes through the exact same
+/// `Queue::enqueue` + single sequential worker + `WaiterRegistry` machinery
+/// `run_cli_style_request` uses, so the "no concurrent writes to the notes
+/// repo" guardrail applies identically.
+async fn run_todo_api_op(state: &RestState, op: TodoApiOp) -> Result<Response, ApiError> {
+    let (request_id, rx) = state.daemon.waiters.register();
+    let job = Job {
+        chat: ChatRef::Rest { request_id },
+        reply_to: MessageRef::Rest { request_id },
+        kind: JobKind::TodoApi(op),
+    };
+    if let Err(err) = state.daemon.core.queue.enqueue(&job) {
+        tracing::error!(%err, "failed to enqueue todo_api job");
+        return Err(ApiError::Internal);
+    }
+
+    let timeout = state.daemon.core.config.git_timeout + Duration::from_secs(15);
+    let body = match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(json)) => json,
+        Ok(Err(_)) => {
+            tracing::error!("kamajid closed the todo_api reply channel before answering");
+            return Err(ApiError::Internal);
+        }
+        Err(_) => {
+            tracing::error!("timed out waiting for kamajid to process a todo_api request");
+            return Err(ApiError::Internal);
+        }
+    };
+    // Passed straight through rather than deserialized into a Rust type on
+    // this side: the JSON was already produced by
+    // `kamaji_core::worker::todo_api_job` for exactly this purpose (see its
+    // `TodoApiReply` doc comment), and the browser is the only real
+    // consumer -- round-tripping through a duplicate struct here would just
+    // be a second place the wire shape could drift out of sync.
+    Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
+}
+
+#[derive(Deserialize)]
+struct AddTodoRequest {
+    text: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn add_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(body): Json<AddTodoRequest>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_todo_api_op(
+        &state,
+        TodoApiOp::Add {
+            text: body.text,
+            tags: body.tags,
+        },
+    )
+    .await
+}
+
+async fn resolve_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_todo_api_op(&state, TodoApiOp::Resolve { key }).await
+}
+
+async fn reopen_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_todo_api_op(&state, TodoApiOp::Reopen { key }).await
+}
+
+#[derive(Deserialize)]
+struct EditTodoRequest {
+    text: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn edit_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<EditTodoRequest>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_todo_api_op(
+        &state,
+        TodoApiOp::Edit {
+            key,
+            text: body.text,
+            tags: body.tags,
+        },
+    )
+    .await
+}
+
+/// Permanently deletes a todo -- the one operation among these that has no
+/// resolve/reopen-style undo (see `TodoApiOp::Delete`'s doc comment). The
+/// warning-before-you-click responsibility lives in `todo_app.html`; this
+/// handler enforces nothing extra beyond the same session check every other
+/// write here requires.
+async fn delete_todo_handler(
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Response, ApiError> {
+    require_session(&state, &headers).await?;
+    run_todo_api_op(&state, TodoApiOp::Delete { key }).await
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {

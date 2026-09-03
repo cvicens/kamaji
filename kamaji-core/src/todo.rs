@@ -206,6 +206,25 @@ pub fn link_to_goal(
     }
 }
 
+/// Rewrites `key`'s tags/text in place -- web-API-only, see
+/// `checklist::edit_entry`'s doc comment for why this has no
+/// `TodoAction`/`parse_command` counterpart.
+pub fn edit_entry(
+    repo_root: &Path,
+    key: EntryKey,
+    tags: &[String],
+    text: &str,
+) -> Result<PathBuf, ChecklistError> {
+    checklist::edit_entry(&CFG, repo_root, key, tags, text)
+}
+
+/// Permanently removes the entry at `key` -- web-API-only, see
+/// `checklist::delete_entry`'s doc comment for why this deviates from the
+/// resolve-not-delete precedent the rest of this module follows.
+pub fn hard_delete_entry(repo_root: &Path, key: EntryKey) -> Result<PathBuf, ChecklistError> {
+    checklist::delete_entry(&CFG, repo_root, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +339,24 @@ mod tests {
         }
         let open_again = list_entries(dir.path(), StatusFilter::Open).unwrap();
         assert_eq!(open_again.len(), 1);
+    }
+
+    #[test]
+    fn edit_entry_and_hard_delete_entry_wrap_the_checklist_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, path) = add_entry(dir.path(), when(), &["a".to_string()], "old text").unwrap();
+
+        let edited_path = edit_entry(dir.path(), key, &["b".to_string()], "new text").unwrap();
+        assert_eq!(edited_path, path);
+        let entries = list_entries(dir.path(), StatusFilter::Open).unwrap();
+        assert_eq!(entries[0].text, "new text");
+        assert_eq!(entries[0].tags, vec!["b"]);
+
+        let deleted_path = hard_delete_entry(dir.path(), key).unwrap();
+        assert_eq!(deleted_path, path);
+        assert!(list_entries(dir.path(), StatusFilter::Open)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

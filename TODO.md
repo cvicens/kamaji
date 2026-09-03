@@ -517,6 +517,67 @@ single-flavor assumption baked in today.
       Environment="CODEX_BIN=/opt/codex/bin/codex"
       ```
 
+### TODO management web UI (`/api/todos` + `/app`)
+
+Prompted by a user request for "an easy to use web app to Add/Update/Delete
+TODO items, protected the same way as the REST API, with a token." Decided
+shape (superseding the earlier open questions this section started as):
+
+- [x] **Reuses the existing REST API's TOTP-login -> bearer-session auth
+      as-is, no second token scheme.** `kamajid`'s REST API
+      (`kamajid/src/transport/rest.rs`, `kamaji-core/src/auth.rs`) already
+      does exactly "protected with a token": `/auth/login` (TOTP code ->
+      bearer token, rate-limited) then `Authorization: Bearer <token>` on
+      every call, sessions in the existing `SESSIONS` redb table. The new
+      `/api/todos/*` routes and the static `/app` frontend are additions to
+      this same router/process -- no new port, no new service to secure.
+- [x] **Structured JSON, not a UI wrapper around `CliRequest::Todo`'s text
+      replies.** `GET /api/todos` reads `checklist::list_entries` directly
+      (a filesystem read, no git write, so it bypasses the queue the same
+      way `/status`/`/history` already do) and returns `Vec<Entry>` as JSON
+      (`checklist::Entry`/`Status`/`EntryKey` gained `Serialize`). Writes
+      (add/resolve/reopen/edit/delete) go through a new `JobKind::TodoApi`
+      variant (`kamaji-core/src/queue.rs`) -- still `Queue::enqueue` and the
+      single sequential worker, same guardrail as every other write to the
+      notes repo, just carrying a typed `TodoApiOp` instead of the
+      chat-command `(name, args)` shape, and replying with a JSON string
+      (`{ok, message, entry}`) that the REST handler passes straight
+      through rather than a human-formatted chat reply.
+      `kamaji_core::worker::todo_api_job` implements each op.
+- [x] **Edit and hard-delete are new capabilities, deliberately scoped to
+      this access point only** -- explicit user call: resolve/reopen reuse
+      the existing `checklist::open_entry`/`close_entry`, but in-place
+      text/tag editing and permanent deletion have no chat/CLI equivalent
+      and aren't being added as one (no new `/todo edit|delete` subcommand,
+      `TodoAction`/`parse_command` untouched) -- the whole point was richer
+      input (tags/links/emoji) in a browser, not a new chat surface.
+      - **Edit** (`checklist::edit_entry`/`entry_file::edit`): only
+        supported for the new per-entry file format (same boundary
+        `entry_exists`/linking already draw) -- re-renders the file with
+        new tags/text while preserving the original `timestamp:`,
+        `status:`, and `links:`. A legacy-format entry (or missing key)
+        replies "not found, or predates the editable per-entry format"
+        rather than silently no-op-ing.
+      - **Hard delete** (`checklist::delete_entry`): removes the entry
+        file outright and commits the removal (`git rm` via
+        `commit_and_push`) -- a real deviation from the "git history is
+        the audit trail, nothing is ever removed" precedent set by
+        `/todo`/`/goal`'s resolve-not-delete design, accepted here because
+        the user explicitly asked for it and the deletion itself is still
+        committed (so it's *visible* in history, just not *reversible*
+        from a running note). Same new-format-only boundary as edit.
+        Frontend shows a clear warning before calling this endpoint.
+- [ ] **Frontend**: single static page at `GET /app` (no build step --
+      plain HTML/CSS/JS, embedded via `include_str!`), TOTP login screen
+      storing the bearer token in `localStorage`, then list/add/edit/
+      resolve/reopen/delete against `/api/todos`. Responsive for both a
+      laptop and a phone (flexbox/grid + a viewport meta tag, no separate
+      mobile build). No CORS needed -- same-origin as the REST API it
+      calls.
+- [ ] **Not done in this pass**: no equivalent web UI for `/goal` (todo
+      only, per the original ask) -- the same `checklist` primitives would
+      make a `goal.rs` version straightforward to add later if wanted.
+
 ### Newly captured, not designed yet
 
 - [ ] **Module-level doc comments.** None of the `kamaji-core/src/*.rs` files

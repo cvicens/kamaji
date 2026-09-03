@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use serde::Serialize;
 
 use crate::error::ChecklistError;
 
@@ -69,7 +70,8 @@ pub enum StatusFilter {
     Closed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Status {
     Open,
     Closed,
@@ -108,6 +110,20 @@ impl FromStr for EntryKey {
     }
 }
 
+/// Serialized as its `Display` string (`"2026-08-03-2"`), not as a
+/// `{date, line}` object -- this is the same shape `FromStr` parses back,
+/// and the only shape the web UI (or anything else consuming
+/// `/api/todos` JSON) needs to round-trip a key through a form field or a
+/// URL path segment.
+impl Serialize for EntryKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 /// What a user typed to identify an entry for `close`/`reopen`: either the
 /// full `EntryKey` (`2026-08-03-2`), or a plain number referring to that
 /// position in the most recently shown `/todo list`/`/goal list` for the
@@ -137,7 +153,7 @@ impl FromStr for EntryReference {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Entry {
     pub key: EntryKey,
     pub tags: Vec<String>,
@@ -625,6 +641,59 @@ pub fn add_link(
         )),
         None => Ok(None),
     }
+}
+
+/// Rewrites the tags/text of an already-existing entry at `key`, preserving
+/// its status, links, and creation timestamp -- see `entry_file::edit`.
+/// Only supported for the new per-entry file format (same boundary
+/// `entry_exists` already draws for link targets): a legacy-format entry or
+/// a missing key both surface as `ChecklistError::NotFound`, since there's
+/// no single file to rewrite for a line inside a shared month-file.
+/// Deliberately has no `checklist::Action`/`parse_command` counterpart --
+/// unlike `add`/`close`/`reopen`, editing isn't a chat-typable subcommand
+/// for any domain today (see TODO.md's "TODO management web UI" note); the
+/// only caller is the web API.
+pub fn edit_entry(
+    cfg: &Config,
+    repo_root: &Path,
+    key: EntryKey,
+    tags: &[String],
+    text: &str,
+) -> Result<PathBuf, ChecklistError> {
+    let path = entry_file::entry_path(cfg, repo_root, key);
+    if !path.exists() {
+        return Err(ChecklistError::NotFound(format!(
+            "{key} (not found, or predates the editable per-entry format)"
+        )));
+    }
+    entry_file::edit(cfg, &path, tags, text)?;
+    Ok(path.strip_prefix(repo_root).unwrap_or(&path).to_path_buf())
+}
+
+/// Permanently removes the entry file at `key` -- unlike `close_entry`,
+/// this doesn't keep the entry around as a closed/resolved record; the file
+/// is gone, git history is what's left of it (the caller is expected to
+/// commit the removal). A deliberate deviation from the "nothing is ever
+/// deleted, git history is the audit trail" precedent `close_entry`/
+/// `open_entry` follow -- see TODO.md's "TODO management web UI" note for
+/// why this exists anyway (explicit user ask, web API only, never a chat
+/// subcommand). Same new-per-entry-format-only boundary as `edit_entry`.
+pub fn delete_entry(
+    cfg: &Config,
+    repo_root: &Path,
+    key: EntryKey,
+) -> Result<PathBuf, ChecklistError> {
+    let path = entry_file::entry_path(cfg, repo_root, key);
+    if !path.exists() {
+        return Err(ChecklistError::NotFound(format!(
+            "{key} (not found, or predates the deletable per-entry format)"
+        )));
+    }
+    std::fs::remove_file(&path).map_err(|source| ChecklistError::Write {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(path.strip_prefix(repo_root).unwrap_or(&path).to_path_buf())
 }
 
 /// Turns whatever the user typed into a concrete `EntryKey`: a `Key` is
@@ -1142,6 +1211,84 @@ mod tests {
 
         let open = list_entries(&TEST_CFG, dir.path(), StatusFilter::Open).unwrap();
         assert_eq!(open[0].links.len(), 1);
+    }
+
+    #[test]
+    fn edit_entry_rewrites_new_format_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (k, path) =
+            add_entry(&TEST_CFG, dir.path(), when(), &["a".to_string()], "old").unwrap();
+
+        let edited_path = edit_entry(&TEST_CFG, dir.path(), k, &["b".to_string()], "new").unwrap();
+        assert_eq!(edited_path, path);
+
+        let entries = list_entries(&TEST_CFG, dir.path(), StatusFilter::Open).unwrap();
+        assert_eq!(entries[0].text, "new");
+        assert_eq!(entries[0].tags, vec!["b"]);
+    }
+
+    #[test]
+    fn edit_entry_missing_key_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            edit_entry(&TEST_CFG, dir.path(), key(2026, 7, 17, 1), &[], "new"),
+            Err(ChecklistError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn edit_entry_rejects_legacy_format_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let year_dir = dir.path().join("thing/2026");
+        std::fs::create_dir_all(&year_dir).unwrap();
+        std::fs::write(
+            year_dir.join("07.md"),
+            "---\ntype: thing-list\ntitle: \"x\"\ntimestamp: 2026-07-01T00:00:00Z\n---\n\n## 17-07-2026\n- [ ] [a] legacy item\n",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            edit_entry(&TEST_CFG, dir.path(), key(2026, 7, 17, 1), &[], "new"),
+            Err(ChecklistError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn delete_entry_removes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (k, path) = add_entry(&TEST_CFG, dir.path(), when(), &[], "temporary").unwrap();
+        assert!(dir.path().join(&path).exists());
+
+        let deleted_path = delete_entry(&TEST_CFG, dir.path(), k).unwrap();
+        assert_eq!(deleted_path, path);
+        assert!(!dir.path().join(&path).exists());
+
+        let entries = list_entries(&TEST_CFG, dir.path(), StatusFilter::Open).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn delete_entry_missing_key_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            delete_entry(&TEST_CFG, dir.path(), key(2026, 7, 17, 1)),
+            Err(ChecklistError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn entry_and_status_serialize_for_the_web_api() {
+        let entry = Entry {
+            key: key(2026, 8, 3, 2),
+            tags: vec!["work".to_string()],
+            text: "ship it".to_string(),
+            status: Status::Closed,
+            links: vec!["goals/2026/2026-08-02-1".to_string()],
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"key\":\"2026-08-03-2\""));
+        assert!(json.contains("\"status\":\"closed\""));
+        assert!(json.contains("\"tags\":[\"work\"]"));
     }
 
     #[test]

@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>kamaji todos</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f4;
+    --surface: #ffffff;
+    --text: #1c1c1c;
+    --muted: #6b6b6b;
+    --border: #e0e0de;
+    --accent: #2f6f4f;
+    --accent-text: #ffffff;
+    --danger: #b3261e;
+    --danger-text: #ffffff;
+    --chip-bg: #eef2ee;
+    --chip-text: #2f6f4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --surface: #212226;
+      --text: #eceae5;
+      --muted: #9a9a9a;
+      --border: #35363b;
+      --accent: #59a97e;
+      --accent-text: #0c1210;
+      --danger: #e5877e;
+      --danger-text: #2a0d0a;
+      --chip-bg: #22301f;
+      --chip-text: #8fce9c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  #app {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 1rem 1rem 6rem;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.75rem 0 1rem;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 5;
+  }
+  header h1 {
+    font-size: 1.15rem;
+    margin: 0;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.8rem;
+    min-height: 2.5rem;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.danger {
+    background: var(--danger);
+    color: var(--danger-text);
+    border-color: var(--danger);
+  }
+  button.link {
+    border: none;
+    background: none;
+    padding: 0.25rem 0.4rem;
+    min-height: unset;
+    color: var(--muted);
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input[type=text], input[type=password], textarea {
+    font: inherit;
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+  }
+  textarea { resize: vertical; min-height: 3.2rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .row { display: flex; gap: 0.5rem; }
+  .row.wrap { flex-wrap: wrap; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+  .tabs {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+  }
+  .tabs button {
+    flex: 1;
+    border-radius: 999px;
+  }
+  .tabs button.active {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+  }
+  .chip {
+    display: inline-block;
+    background: var(--chip-bg);
+    color: var(--chip-text);
+    border-radius: 999px;
+    padding: 0.1rem 0.6rem;
+    font-size: 0.78rem;
+    margin: 0.15rem 0.3rem 0 0;
+  }
+  .entry-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+  .entry-text.closed { text-decoration: line-through; color: var(--muted); }
+  .entry-key { font-size: 0.75rem; color: var(--muted); font-family: ui-monospace, monospace; }
+  .links a { color: var(--accent); word-break: break-all; }
+  .actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  #composer {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  }
+  #composer .inner { max-width: 720px; margin: 0 auto; }
+  #banner {
+    position: fixed;
+    top: 0.75rem; left: 50%; transform: translateX(-50%);
+    background: var(--danger); color: var(--danger-text);
+    padding: 0.6rem 1rem; border-radius: 0.5rem;
+    max-width: 90vw; z-index: 20; display: none;
+  }
+  dialog {
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    background: var(--surface);
+    color: var(--text);
+    max-width: 420px;
+    width: 90vw;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  #login-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+  #login-screen form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 320px;
+  }
+  #login-screen h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  #login-screen .field { margin-bottom: 0.9rem; }
+  #login-error { color: var(--danger); font-size: 0.85rem; min-height: 1.1rem; }
+  .empty-state { color: var(--muted); text-align: center; padding: 2rem 1rem; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" hidden>
+  <form id="login-form">
+    <h1>kamaji todos</h1>
+    <div class="field">
+      <label for="totp">6-digit code</label>
+      <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" required autofocus>
+    </div>
+    <button type="submit" class="primary" style="width:100%">Log in</button>
+    <div id="login-error"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>Todos</h1>
+    <button class="link" id="logout-btn">Log out</button>
+  </header>
+
+  <div class="tabs">
+    <button id="tab-open" class="active">Open</button>
+    <button id="tab-closed">Closed</button>
+  </div>
+
+  <div id="list"></div>
+
+  <div id="composer">
+    <div class="inner">
+      <div class="row wrap" id="tag-preview"></div>
+      <textarea id="new-text" placeholder="What needs doing? #tags and links work right in the text."></textarea>
+      <div class="row" style="margin-top:0.5rem">
+        <button class="primary grow" id="add-btn">Add todo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="banner"></div>
+
+<dialog id="delete-dialog">
+  <p><strong>Permanently delete this todo?</strong></p>
+  <p class="muted" id="delete-target"></p>
+  <p class="muted">This removes the file and commits the removal. Unlike resolving, there's no reopen for this one.</p>
+  <div class="row" style="justify-content:flex-end; margin-top:1rem">
+    <button id="delete-cancel">Cancel</button>
+    <button class="danger" id="delete-confirm">Delete permanently</button>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  "use strict";
+
+  const TOKEN_KEY = "kamaji_todo_token";
+  const state = { filter: "open", entries: [], editingKey: null, pendingDeleteKey: null };
+
+  function token() { return localStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  function showBanner(msg) {
+    const el = document.getElementById("banner");
+    el.textContent = msg;
+    el.style.display = "block";
+    clearTimeout(showBanner._t);
+    showBanner._t = setTimeout(() => { el.style.display = "none"; }, 4000);
+  }
+
+  // Mirrors kamaji-core's tags::parse_tag_token/extract_tags closely enough
+  // for a live preview: whitespace-delimited, trim a few edge characters,
+  // require at least one letter so a bare #123 isn't treated as a tag.
+  function extractTags(text) {
+    const out = [];
+    for (let token of text.split(/\\s+/)) {
+      token = token.replace(/^[("']+/, "").replace(/[,.;:!?)\\]}"']+$/, "");
+      if (!token.startsWith("#")) continue;
+      const rest = token.slice(1);
+      if (!rest) continue;
+      if (!/^[A-Za-z0-9_-]+$/.test(rest)) continue;
+      if (!/[A-Za-z]/.test(rest)) continue;
+      out.push(rest);
+    }
+    return out;
+  }
+
+  function linkify(text) {
+    const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return escaped.replace(/(https?:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  }
+
+  async function api(path, options) {
+    options = options || {};
+    const headers = Object.assign({}, options.headers, { Authorization: "Bearer " + token() });
+    if (options.body !== undefined) headers["Content-Type"] = "application/json";
+    const res = await fetch(path, Object.assign({}, options, { headers }));
+    if (res.status === 401) {
+      clearToken();
+      showLogin();
+      throw new Error("session expired, please log in again");
+    }
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* no body */ }
+    if (!res.ok) {
+      const msg = (data && (data.error || data.message)) || ("request failed (" + res.status + ")");
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function showLogin() {
+    document.getElementById("login-screen").hidden = false;
+    document.getElementById("app").hidden = true;
+  }
+
+  function showApp() {
+    document.getElementById("login-screen").hidden = true;
+    document.getElementById("app").hidden = false;
+    loadEntries();
+  }
+
+  async function loadEntries() {
+    const list = document.getElementById("list");
+    list.innerHTML = '<p class="muted">Loading...</p>';
+    try {
+      state.entries = await api("/api/todos?status=" + state.filter);
+      renderList();
+    } catch (err) {
+      list.innerHTML = "";
+      showBanner(err.message);
+    }
+  }
+
+  function renderList() {
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+    if (state.entries.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nothing ' + state.filter + '.</div>';
+      return;
+    }
+    for (const entry of state.entries) {
+      list.appendChild(renderCard(entry));
+    }
+  }
+
+  function renderCard(entry) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    if (state.editingKey === entry.key) {
+      card.appendChild(renderEditForm(entry));
+      return card;
+    }
+
+    const textEl = document.createElement("div");
+    textEl.className = "entry-text" + (entry.status === "closed" ? " closed" : "");
+    textEl.innerHTML = linkify(entry.text);
+    card.appendChild(textEl);
+
+    if (entry.tags && entry.tags.length) {
+      const tagsRow = document.createElement("div");
+      tagsRow.className = "row wrap";
+      tagsRow.style.marginTop = "0.4rem";
+      for (const t of entry.tags) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = "#" + t;
+        tagsRow.appendChild(chip);
+      }
+      card.appendChild(tagsRow);
+    }
+
+    if (entry.links && entry.links.length) {
+      const linksEl = document.createElement("div");
+      linksEl.className = "muted links";
+      linksEl.style.marginTop = "0.3rem";
+      linksEl.textContent = "linked: " + entry.links.join(", ");
+      card.appendChild(linksEl);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "entry-key";
+    meta.style.marginTop = "0.4rem";
+    meta.textContent = entry.key;
+    card.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    if (entry.status === "open") {
+      actions.appendChild(makeButton("Resolve", () => resolveEntry(entry.key)));
+    } else {
+      actions.appendChild(makeButton("Reopen", () => reopenEntry(entry.key)));
+    }
+    actions.appendChild(makeButton("Edit", () => { state.editingKey = entry.key; renderList(); }));
+    actions.appendChild(makeButton("Delete", () => openDeleteDialog(entry), "danger"));
+    card.appendChild(actions);
+
+    return card;
+  }
+
+  function makeButton(label, onClick, cls) {
+    const btn = document.createElement("button");
+    if (cls) btn.className = cls;
+    btn.textContent = label;
+    btn.addEventListener("click", onClick);
+    return btn;
+  }
+
+  function renderEditForm(entry) {
+    const wrap = document.createElement("div");
+    const textarea = document.createElement("textarea");
+    textarea.value = entry.text;
+    wrap.appendChild(textarea);
+
+    const preview = document.createElement("div");
+    preview.className = "row wrap";
+    preview.style.margin = "0.4rem 0";
+    const updatePreview = () => {
+      preview.innerHTML = "";
+      for (const t of extractTags(textarea.value)) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = "#" + t;
+        preview.appendChild(chip);
+      }
+    };
+    textarea.addEventListener("input", updatePreview);
+    updatePreview();
+    wrap.appendChild(preview);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    actions.appendChild(makeButton("Save", async () => {
+      const text = textarea.value.trim();
+      if (!text) { showBanner("text must not be empty"); return; }
+      try {
+        await api("/api/todos/" + encodeURIComponent(entry.key), {
+          method: "PATCH",
+          body: JSON.stringify({ text, tags: extractTags(text) }),
+        });
+        state.editingKey = null;
+        await loadEntries();
+      } catch (err) { showBanner(err.message); }
+    }, "primary"));
+    actions.appendChild(makeButton("Cancel", () => { state.editingKey = null; renderList(); }));
+    wrap.appendChild(actions);
+    return wrap;
+  }
+
+  async function resolveEntry(key) {
+    try {
+      await api("/api/todos/" + encodeURIComponent(key) + "/resolve", { method: "POST" });
+      await loadEntries();
+    } catch (err) { showBanner(err.message); }
+  }
+
+  async function reopenEntry(key) {
+    try {
+      await api("/api/todos/" + encodeURIComponent(key) + "/reopen", { method: "POST" });
+      await loadEntries();
+    } catch (err) { showBanner(err.message); }
+  }
+
+  function openDeleteDialog(entry) {
+    state.pendingDeleteKey = entry.key;
+    document.getElementById("delete-target").textContent = entry.key + ": " + entry.text;
+    document.getElementById("delete-dialog").showModal();
+  }
+
+  async function addTodo() {
+    const textarea = document.getElementById("new-text");
+    const text = textarea.value.trim();
+    if (!text) return;
+    const addBtn = document.getElementById("add-btn");
+    addBtn.disabled = true;
+    try {
+      await api("/api/todos", {
+        method: "POST",
+        body: JSON.stringify({ text, tags: extractTags(text) }),
+      });
+      textarea.value = "";
+      document.getElementById("tag-preview").innerHTML = "";
+      if (state.filter === "open") await loadEntries();
+    } catch (err) {
+      showBanner(err.message);
+    } finally {
+      addBtn.disabled = false;
+    }
+  }
+
+  function setFilter(filter) {
+    state.filter = filter;
+    state.editingKey = null;
+    document.getElementById("tab-open").classList.toggle("active", filter === "open");
+    document.getElementById("tab-closed").classList.toggle("active", filter === "closed");
+    loadEntries();
+  }
+
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = document.getElementById("totp").value.trim();
+    const errEl = document.getElementById("login-error");
+    errEl.textContent = "";
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = (data && data.error) || "login failed";
+        return;
+      }
+      setToken(data.token);
+      showApp();
+    } catch (err) {
+      errEl.textContent = "network error: " + err.message;
+    }
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    try { await api("/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
+    clearToken();
+    showLogin();
+  });
+
+  document.getElementById("tab-open").addEventListener("click", () => setFilter("open"));
+  document.getElementById("tab-closed").addEventListener("click", () => setFilter("closed"));
+  document.getElementById("add-btn").addEventListener("click", addTodo);
+  document.getElementById("new-text").addEventListener("input", () => {
+    const preview = document.getElementById("tag-preview");
+    preview.innerHTML = "";
+    for (const t of extractTags(document.getElementById("new-text").value)) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = "#" + t;
+      preview.appendChild(chip);
+    }
+  });
+  document.getElementById("new-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addTodo();
+  });
+
+  document.getElementById("delete-cancel").addEventListener("click", () => {
+    document.getElementById("delete-dialog").close();
+  });
+  document.getElementById("delete-confirm").addEventListener("click", async () => {
+    const key = state.pendingDeleteKey;
+    document.getElementById("delete-dialog").close();
+    if (!key) return;
+    try {
+      await api("/api/todos/" + encodeURIComponent(key), { method: "DELETE" });
+      await loadEntries();
+    } catch (err) { showBanner(err.message); }
+  });
+
+  if (token()) { showApp(); } else { showLogin(); }
+})();
+</script>
+</body>
+</html>
