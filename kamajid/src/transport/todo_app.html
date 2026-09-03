@@ -264,8 +264,8 @@
   // require at least one letter so a bare #123 isn't treated as a tag.
   function extractTags(text) {
     const out = [];
-    for (let token of text.split(/\\s+/)) {
-      token = token.replace(/^[("']+/, "").replace(/[,.;:!?)\\]}"']+$/, "");
+    for (let token of text.split(/\s+/)) {
+      token = token.replace(/^[("']+/, "").replace(/[,.;:!?)\]}"']+$/, "");
       if (!token.startsWith("#")) continue;
       const rest = token.slice(1);
       if (!rest) continue;
@@ -278,7 +278,7 @@
 
   function linkify(text) {
     const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return escaped.replace(/(https?:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    return escaped.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   }
 
   async function api(path, options) {
